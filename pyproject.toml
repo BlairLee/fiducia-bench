@@ -1,0 +1,12 @@
+[project]
+name = "fiducia-bench"
+version = "0.0.1"
+description = "Benchmarking the governability of financial agents"
+requires-python = ">=3.11"
+dependencies = ["pyyaml>=6.0", "pydantic>=2.5"]
+
+[project.optional-dependencies]
+llm = ["openai>=1.40"]
+dev = ["pytest>=8.0"]
+[tool.setuptools.packages.find]
+include = ["fiducia*"]

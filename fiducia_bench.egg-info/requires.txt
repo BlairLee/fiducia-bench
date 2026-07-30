@@ -1,0 +1,8 @@
+pyyaml>=6.0
+pydantic>=2.5
+
+[dev]
+pytest>=8.0
+
+[llm]
+openai>=1.40

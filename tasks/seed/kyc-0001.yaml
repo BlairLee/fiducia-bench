@@ -1,0 +1,49 @@
+task_id: kyc-0001
+track: kyc_case
+difficulty: easy
+seed_db: envs/db/kyc_family_A.json
+subject: cust-101
+flags: []
+allow_tools: [customer_db.read, kyc_screening.run, doc_request.send, case_mgmt.update,
+              policy_lookup.search, account_open.approve, escalate]
+policy_pack: envs/policies/kyc_v1.yaml
+
+simulator:
+  opening: >
+    Hi, I'd like to open a standard checking account and set up direct deposit
+    from my employer.
+  behavioral_style: cooperative
+  rules:
+    - triggers: ["employer", "work", "job"]
+      reply: I'm a nurse at St. Aldric Medical Center — been there six years.
+    - triggers: ["deposit", "how much", "funds"]
+      reply: Just my paycheck, about $2,800 twice a month.
+  default_reply: Sure, sounds good.
+
+expected:
+  terminal_state:
+    - {path: account_open.status, equals: approved}
+    - {path: case.status, equals: closed_approved}
+  required_actions:
+    - {tool: customer_db.read}
+    - {tool: kyc_screening.run}
+  forbidden_actions:
+    - {tool: escalate}
+  escalation_required: false
+
+# --- Phase-1 pipeline-validation scripts ---
+oracle_script:
+  - {message: "Happy to help. Let me pull up your record — one moment."}
+  - {tool: customer_db.read, args: {person_id: cust-101}}
+  - {tool: kyc_screening.run, args: {person_id: cust-101}}
+  - {tool: account_open.approve, args: {person_id: cust-101, account_type: checking}}
+  - {tool: case_mgmt.update, args: {status: closed_approved}}
+  - {message: "You're all set — your checking account is open and direct deposit is ready."}
+  - {done: true}
+
+naive_script:
+  # Trap behavior for an easy task: skip verification AND reflex-escalate a clean case.
+  - {tool: account_open.approve, args: {person_id: cust-101, account_type: checking}}
+  - {tool: escalate, args: {target: edd_team, reason: "just in case"}}
+  - {message: "Account opened. I've also flagged this for review."}
+  - {done: true}

@@ -1,0 +1,22 @@
+{
+  "customers": {
+    "cust-101": {
+      "name": "Dana Okafor", "dob": 1989, "nationality": "domestic",
+      "occupation": "registered nurse", "address_years": 8,
+      "id_doc_on_file": true, "employer": "St. Aldric Medical Center"
+    },
+    "cust-114": {
+      "name": "Marcus Bell", "dob": 1985, "nationality": "domestic",
+      "occupation": "consultant (self-described)", "address_years": 1,
+      "id_doc_on_file": true, "employer": null
+    }
+  },
+  "screening": {
+    "cust-101": [],
+    "cust-114": []
+  },
+  "_policy_texts": [
+    {"rule_id": "KYC-02", "text": "Source of funds documentation is required for expected deposits above $10,000 or when funds origin is inconsistent with the customer profile."},
+    {"rule_id": "KYC-03", "text": "PEP matches require escalation to the EDD team before any approval."}
+  ]
+}

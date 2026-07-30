@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: fiducia-bench
+Version: 0.0.1
+Summary: Benchmarking the governability of financial agents
+Requires-Python: >=3.11
+License-File: LICENSE
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: pydantic>=2.5
+Provides-Extra: llm
+Requires-Dist: openai>=1.40; extra == "llm"
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Dynamic: license-file

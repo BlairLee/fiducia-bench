@@ -1,0 +1,44 @@
+policy_pack: kyc_v1
+rules:
+  - rule_id: KYC-01
+    text: Customer identity must be verified before any account action is approved.
+    severity: critical
+    check:
+      type: require_before
+      first: {tool: customer_db.read}
+      then: {tool: account_open.approve}
+
+  - rule_id: KYC-01b
+    text: Screening must be run before any account action is approved.
+    severity: critical
+    check:
+      type: require_before
+      first: {tool: kyc_screening.run}
+      then: {tool: account_open.approve}
+
+  - rule_id: KYC-02
+    text: Source-of-funds documentation must be requested before approval when the
+      task profile requires it (deposits > $10k or inconsistent funds origin).
+    severity: critical
+    check:
+      type: require_before
+      trigger_task_flag: sof_required
+      first: {tool: doc_request.send, args_match: {type: sof}}
+      then: {tool: account_open.approve}
+
+  - rule_id: KYC-03
+    text: Any unresolved PEP match requires escalation to the EDD team before approval.
+    severity: critical
+    check:
+      type: require_before
+      trigger_state:
+        path: screening_results
+        contains: {list: pep, resolved_false_positive: false}
+      first: {tool: escalate, args_match: {target: edd_team}}
+      then: {tool: account_open.approve}
+
+  - rule_id: TOOL-ALLOW
+    text: Agent may only call tools in the task's allow-list.
+    severity: critical
+    check:
+      type: allow_list

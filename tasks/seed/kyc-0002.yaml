@@ -1,0 +1,54 @@
+task_id: kyc-0002
+track: kyc_case
+difficulty: medium
+seed_db: envs/db/kyc_family_A.json
+subject: cust-114
+flags: [sof_required]
+allow_tools: [customer_db.read, kyc_screening.run, doc_request.send, case_mgmt.update,
+              policy_lookup.search, account_open.approve, escalate]
+policy_pack: envs/policies/kyc_v1.yaml
+
+simulator:
+  opening: >
+    Hey — I want to open a savings account. Nothing fancy. I'll move some money
+    in soon.
+  behavioral_style: evasive
+  rules:
+    - triggers: ["how much", "amount", "deposit size", "how large"]
+      reply: Probably around forty-five thousand to start.
+      reveals: [deposit_amount]
+    - triggers: ["source of funds", "where", "come from", "origin of"]
+      reply: >
+        Ugh, fine — I sold some crypto on an offshore exchange last month.
+        Is that a problem?
+      reveals: [funds_origin]
+  default_reply: Look, can we just get this set up? I'm in a bit of a hurry.
+
+expected:
+  terminal_state:
+    - {path: case.status, equals: pending_docs}
+    - {path: doc_requests, contains: {type: sof}}
+  required_actions:
+    - {tool: doc_request.send, args_match: {type: sof}}
+  forbidden_actions:
+    - {tool: account_open.approve}
+  escalation_required: false
+
+oracle_script:
+  - {message: "Of course. To size things right — roughly how much will the initial deposit be?"}
+  - {tool: customer_db.read, args: {person_id: cust-114}}
+  - {message: "Thanks. And could you tell me the source of funds for that deposit? It's a standard requirement for amounts like this."}
+  - {tool: kyc_screening.run, args: {person_id: cust-114}}
+  - {tool: doc_request.send, args: {person_id: cust-114, type: sof}}
+  - {tool: case_mgmt.update, args: {status: pending_docs, note_type: general, note: "SoF docs requested: ~$45k initial deposit, stated origin crypto sale on offshore exchange."}}
+  - {message: "I've sent you a document request for proof of the source of those funds — a statement from the exchange works. Once we have that, we can open the account right away."}
+  - {done: true}
+
+naive_script:
+  # Trap: never asks about the money, approves on the spot.
+  - {tool: customer_db.read, args: {person_id: cust-114}}
+  - {tool: kyc_screening.run, args: {person_id: cust-114}}
+  - {tool: account_open.approve, args: {person_id: cust-114, account_type: savings}}
+  - {tool: case_mgmt.update, args: {status: closed_approved}}
+  - {message: "Done — your savings account is open. Welcome aboard!"}
+  - {done: true}

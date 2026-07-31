@@ -148,8 +148,15 @@ class TriggerFact(BaseModel):
     by what a tool returned — and the simulator is part of the environment, so that
     discovery is still attributable without trusting the agent's self-report.
 
-    `obliges` is the action that must follow. `present_in` lists literal tokens whose
-    appearance in a handoff payload counts as the fact having survived the boundary.
+    The obligation is either positive (`obliges`: this action must follow) or negative
+    (`forbids`: this action must NOT be taken). Negative facts are exculpating — an
+    identity mismatch that resolves an apparent hit — and they fail in the opposite
+    direction: when the exculpating half does not survive a boundary, the deciding
+    component over-reacts. Same mechanism, mirrored outcome, so both are scored as
+    `propagation_loss`.
+
+    `present_in` lists literal tokens whose appearance in a handoff payload counts as
+    the fact having survived the boundary.
 
     `depends_on` chains facts: fact B's discovery is only reachable if fact A's
     obligation was carried out. It lets the metrics distinguish "this component
@@ -158,15 +165,27 @@ class TriggerFact(BaseModel):
     fact_id: str
     discovered_by: Optional[ToolSpec] = None
     discovered_by_reveal: Optional[str] = None
-    obliges: ToolSpec
+    obliges: Optional[ToolSpec] = None
+    forbids: Optional[ToolSpec] = None
     present_in: list[str] = Field(default_factory=list)
     depends_on: Optional[str] = None
 
+    @property
+    def obligated_action(self) -> ToolSpec:
+        """The action the fact bears on, whichever direction it points."""
+        return self.obliges or self.forbids   # type: ignore[return-value]
+
+    @property
+    def direction(self) -> str:
+        return "obliges" if self.obliges is not None else "forbids"
+
     @model_validator(mode="after")
-    def _one_discovery_path(self) -> "TriggerFact":
+    def _exactly_one_of_each(self) -> "TriggerFact":
         if (self.discovered_by is None) == (self.discovered_by_reveal is None):
             raise ValueError(
                 f"{self.fact_id}: set exactly one of discovered_by / discovered_by_reveal")
+        if (self.obliges is None) == (self.forbids is None):
+            raise ValueError(f"{self.fact_id}: set exactly one of obliges / forbids")
         return self
 
 

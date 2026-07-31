@@ -33,7 +33,8 @@ The author works on enterprise agent systems professionally. This repo must stay
 
 ## Current status
 
-Phase 1c complete. `python tests/test_e2e.py` → 17 passing.
+Phase 1c complete — seed set 0001–0005 is machine-runnable.
+`python tests/test_e2e.py` → 25 passing.
 
 - Environment: seeded JSON state + deterministic tools, **environment-owned audit log**
 - Simulator: scripted, trigger-substring driven (LLM simulator is Phase 2). Hidden-info
@@ -42,10 +43,17 @@ Phase 1c complete. `python tests/test_e2e.py` → 17 passing.
 - Verifiers: deterministic policy checks via **trajectory replay**. Check types:
   `require_before`, `allow_list`, `state_assert`, `forbid_when`
 - Decomposition metrics: actor attribution, handoff logging, fact attenuation, and
-  **fact chains** (`TriggerFact.depends_on` → `blocked_upstream`, `chain_broken_at`)
+  **fact chains** (`TriggerFact.depends_on` → `blocked_upstream`, `chain_broken_at`).
+  A fact survives a boundary only if **every** handoff on the path from discovery to
+  the acting component carries it — `any` would pass a distance-2 task whose last hop
+  dropped the fact
+- Obligations run in **both directions**: `TriggerFact.obliges` (act) and `forbids`
+  (an exculpating fact — do not act). Both score as `propagation_loss`, because
+  under- and over-escalation are the same mechanism with opposite outcomes
 - Tasks: kyc-0001 (clean/precision control), kyc-0002 (SoF hidden info), kyc-0003
   (fuzzy sanctions match, with `pipeline_faithful` vs `pipeline_lossy` variants),
-  kyc-0004 (business account, chained facts, two lossy variants breaking each link)
+  kyc-0004 (business account, chained facts, two lossy variants breaking each link),
+  kyc-0005 (resolvable PEP false positive — negative obligation, mirror of 0004)
 
 ## Non-negotiable design invariants
 
@@ -65,7 +73,10 @@ Break these and the benchmark stops being credible:
    the verifiers must separate them. A task without both is not done.
 6. **Traps are the point.** Hard tasks contain a path that satisfies the user's surface goal
    while violating policy. Escalation is scored in *both* directions — over-escalating a clean
-   case is a failure too (see kyc-0001, and 0005 when built).
+   case is a failure too (kyc-0001, kyc-0005).
+7. **Where an agent asserts a judgement, the environment re-derives it.** `screening.resolve`
+   stores the agent's claim and the environment's finding separately, and policy checks read
+   only the finding. Never let a rule turn on the agent's own account of its work.
 
 ## Layout
 
@@ -105,25 +116,26 @@ discovery and obligated action.
 
 ## What's next (in order)
 
-1. **kyc-0005** — PEP exact-name match that is a *resolvable false positive*. The obligation is
-   **negative**: must NOT escalate, and must document a two-attribute mismatch before
-   approving. `TriggerFact.obliges` cannot express this today — likely needs `forbids` or
-   `obliges_absence`. Mirror-image of 0004; together they prevent gaming escalation by
-   always escalating. The new `forbid_when` check type covers the *policy* side of a
-   negative obligation; the *trigger-fact* side is still unexpressed.
-2. Arm harness: real D0/D1/D2 implementations over the shared tool layer (scripted versions
-   first, to unit-test attribution).
-3. LLM user simulator against a local OpenAI-compatible endpoint; pin model + quantization +
+1. Arm harness: real D0/D1/D2 implementations over the shared tool layer (scripted versions
+   first, to unit-test attribution). The seed set is complete, so the harness can be designed
+   against every obligation shape it will meet — including a task where the correct answer is
+   *not* to escalate.
+2. LLM user simulator against a local OpenAI-compatible endpoint; pin model + quantization +
    sampling params for reproducibility.
-4. Pilot: 20 tasks × 4 arms × 2 models × k=2 → measure per-episode cost before the full grid.
-5. Template expansion to ~100 instances, weighted toward `constraint_distance >= 2`.
+3. Pilot: 20 tasks × 4 arms × 2 models × k=2 → measure per-episode cost before the full grid.
+4. Template expansion to ~100 instances, weighted toward `constraint_distance >= 2`.
+
+Smaller, open: kyc-0003 does not list `screening.resolve` in `allow_tools`, so the
+"self-clear a sanctions match" trap from its design doc is unreachable — the environment
+refuses the call, but no script attempts it and nothing scores the attempt.
 
 ## Conventions
 
 - Python ≥3.11, pydantic v2, PyYAML. No heavy deps without a reason.
 - Tasks are YAML; scripts live under `scripts:` keyed by name (`oracle`, `naive`,
   `pipeline_faithful`, `pipeline_lossy`; add `pipeline_lossy_late` when a task has a
-  fact chain with more than one link to break).
+  fact chain with more than one link to break, and a named script per additional trap —
+  see kyc-0005's `undocumented`).
 - Run tests with `python tests/test_e2e.py` (plain asserts, pytest-compatible).
 - When adding a policy rule, add the task that exercises it *and* the trap script that
   violates it in the same change.

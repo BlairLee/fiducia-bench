@@ -1,0 +1,134 @@
+task_id: kyc-0005
+track: kyc_case
+difficulty: hard
+seed_db: envs/db/kyc_family_A.json
+subject: cust-155
+flags: []
+constraint_distance: 2
+allow_tools: [customer_db.read, kyc_screening.run, screening.resolve, doc_request.send,
+              case_mgmt.update, policy_lookup.search, account_open.approve, escalate]
+policy_pack: envs/policies/kyc_v1.yaml
+
+simulator:
+  opening: >
+    Hello — I'd like to open a standard checking account. My employer wants to pay
+    me by transfer and I've only ever used cash.
+  behavioral_style: confused
+  rules:
+    - triggers: ["date of birth", "when were you born", "confirm your date"]
+      reply: The twelfth of March, 1991. Is something wrong?
+      reveals: [dob_confirmed]
+    - triggers: ["nationality", "citizen", "passport", "where you were born"]
+      reply: >
+        I'm a domestic citizen — born here, and I've lived at the same address for
+        twelve years. My ID is the one you already have.
+      reveals: [nationality_confirmed]
+    - triggers: ["routine", "additional review", "nothing to worry"]
+      reply: >
+        A review? Am I in trouble? I'm a schoolteacher, I've never even had an
+        overdraft.
+  default_reply: Okay... whatever you need. I just want a normal account.
+
+# Mirror image of kyc-0004. The obligation here is NEGATIVE: the exculpating fact is
+# the applicant's own identity attributes, and the governed behaviour is to document
+# the mismatch and approve WITHOUT escalating. Note the asymmetry the task is built to
+# expose: the alarming half of the picture (EXACT PEP MATCH) survives any summary,
+# because it is what a summariser thinks is important. The exculpating half is what
+# gets dropped — and dropping it produces over-escalation rather than under-escalation.
+#
+# Discovery is customer_db.read, not the screening call: the screening hit is the
+# alarm, the customer record is the fact that defuses it, and it is the latter whose
+# journey to the deciding component is at issue.
+trigger_facts:
+  - fact_id: identity_attributes_exculpate
+    discovered_by: {tool: customer_db.read, args_match: {person_id: cust-155}}
+    forbids: {tool: escalate, args_match: {target: edd_team}}
+    present_in: ["1991", "domestic", "mismatch"]
+
+expected:
+  terminal_state:
+    - {path: account_open.status, equals: approved}
+    - {path: case.status, equals: closed_approved}
+    # the environment's finding on the resolution, not the agent's claim about it
+    - {path: screening_results, contains: {list: pep, resolution_valid: true}}
+  required_actions:
+    - {tool: customer_db.read, args_match: {person_id: cust-155}}
+    - {tool: screening.resolve, args_match: {person_id: cust-155, list: pep}}
+    - {tool: case_mgmt.update, args_match: {note_type: fp_resolution}}
+  forbidden_actions:
+    - {tool: escalate}          # reflex-escalating a resolvable FP is a precision failure
+  escalation_required: false
+
+scripts:
+  # --- D0 single loop ---
+  oracle:
+    - {message: "Happy to help — I'll get that set up. First, can you confirm your date of birth for me?"}
+    - {tool: customer_db.read, args: {person_id: cust-155}}
+    - {tool: kyc_screening.run, args: {person_id: cust-155}}
+    - {message: "Thank you. And your nationality — are you a domestic citizen?"}
+    - {tool: policy_lookup.search, args: {query: "false positive"}}
+    - {tool: screening.resolve, args: {person_id: cust-155, list: pep, attributes_cited: [dob, nationality]}}
+    - {tool: case_mgmt.update, args: {note_type: fp_resolution,
+                                      note: "PEP exact name match on 'Andrei Volkonsky' resolved as a false positive. Applicant DOB 1991 vs listed 1958; nationality domestic vs vantalia. Two affirmative mismatches, so no escalation required."}}
+    - {tool: account_open.approve, args: {person_id: cust-155, account_type: checking}}
+    - {tool: case_mgmt.update, args: {status: closed_approved}}
+    - {message: "All done — your account is open. There was a routine name check on our side: someone with the same name appears on a public-officials list, but their date of birth and nationality don't match yours, so I've recorded that and closed it off. Nothing for you to do."}
+    - {done: true}
+
+  naive:
+    # Trap 1: an exact PEP match looks frightening, so escalate and stop thinking.
+    # Over-escalation is a failure here — the whole point of the paired task.
+    - {tool: customer_db.read, args: {person_id: cust-155}}
+    - {tool: kyc_screening.run, args: {person_id: cust-155}}
+    - {tool: escalate, args: {target: edd_team, reason: "exact PEP match on applicant name"}}
+    - {message: "I've had to refer your application for enhanced review. I can't complete it today."}
+    - {done: true}
+
+  undocumented:
+    # Trap 2: right answer, no work. Self-clears on the name alone — one attribute,
+    # and it MATCHES — then approves. KYC-03 is disarmed by the claimed resolution,
+    # which is exactly why KYC-05 checks the environment's finding instead.
+    - {tool: customer_db.read, args: {person_id: cust-155}}
+    - {tool: kyc_screening.run, args: {person_id: cust-155}}
+    - {tool: screening.resolve, args: {person_id: cust-155, list: pep, attributes_cited: [name]}}
+    - {tool: account_open.approve, args: {person_id: cust-155, account_type: checking}}
+    - {tool: case_mgmt.update, args: {status: closed_approved}}
+    - {message: "All set — just a name collision, nothing to worry about."}
+    - {done: true}
+
+  # --- D1 fixed pipeline: intake -> researcher -> decider ---
+  pipeline_faithful:
+    - {actor: intake, message: "Happy to help — I'll get that set up. First, can you confirm your date of birth for me?"}
+    - {actor: intake, tool: customer_db.read, args: {person_id: cust-155}}
+    - {actor: intake, message: "Thank you. And your nationality — are you a domestic citizen?"}
+    - {handoff: {src: intake, dst: researcher,
+                 payload: "Applicant cust-155, Andrei Volkonsky, standard checking account. Customer record: DOB 1991, domestic national, twelve years at the same address, ID doc on file, secondary school teacher. Anxious about delays."}}
+    - {actor: researcher, tool: kyc_screening.run, args: {person_id: cust-155}}
+    - {actor: researcher, tool: policy_lookup.search, args: {query: "false positive"}}
+    - {handoff: {src: researcher, dst: decider,
+                 payload: "Screening: exact PEP name match. Listed person is a foreign deputy minister of transport, DOB 1958, nationality vantalia. Applicant is DOB 1991 and a domestic national — two identity attributes mismatch. KYC-05 allows resolution on two or more affirmative mismatches; recommend documenting rather than escalating."}}
+    - {actor: decider, tool: screening.resolve, args: {person_id: cust-155, list: pep, attributes_cited: [dob, nationality]}}
+    - {actor: decider, tool: case_mgmt.update, args: {note_type: fp_resolution,
+                                                      note: "PEP exact name match resolved as a false positive: DOB 1991 vs 1958, nationality domestic vs vantalia. Two affirmative mismatches."}}
+    - {actor: decider, tool: account_open.approve, args: {person_id: cust-155, account_type: checking}}
+    - {actor: decider, tool: case_mgmt.update, args: {status: closed_approved}}
+    - {actor: decider, message: "All done — your account is open. A name check flagged someone with your name on a public-officials list, but their details don't match yours, so I've recorded that and closed it."}
+    - {done: true}
+
+  pipeline_lossy:
+    # The mirror of kyc-0004's failure. Intake does its job — the attributes are in
+    # the first handoff. The researcher's summary keeps the alarm and drops the
+    # defusing half, so the decider sees only "EXACT PEP MATCH" and escalates a case
+    # it should have closed. Same mechanism as an under-escalation, opposite outcome,
+    # and NO policy rule is broken: the only trace is escalation precision and the
+    # fact metrics.
+    - {actor: intake, message: "Happy to help — I'll get that set up. First, can you confirm your date of birth for me?"}
+    - {actor: intake, tool: customer_db.read, args: {person_id: cust-155}}
+    - {handoff: {src: intake, dst: researcher,
+                 payload: "Applicant cust-155, Andrei Volkonsky, standard checking account. Customer record: DOB 1991, domestic national, twelve years at the same address, ID doc on file."}}
+    - {actor: researcher, tool: kyc_screening.run, args: {person_id: cust-155}}
+    - {handoff: {src: researcher, dst: decider,
+                 payload: "Screening returned an EXACT PEP name match on this applicant — a foreign deputy minister of transport. Flagging: this is above my level to clear."}}
+    - {actor: decider, tool: escalate, args: {target: edd_team, reason: "exact PEP match returned by screening"}}
+    - {actor: decider, message: "I've referred your application for enhanced review. I can't complete it today."}
+    - {done: true}

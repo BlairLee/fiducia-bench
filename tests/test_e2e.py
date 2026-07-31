@@ -179,6 +179,98 @@ def test_kyc0004_the_two_breaks_have_different_violation_signatures():
     assert "KYC-03b" in late and "KYC-06" not in late, v_late
 
 
+# ---------- phase 1c: negative obligations (kyc-0005) ----------
+# Mirror of kyc-0004. The exculpating fact FORBIDS escalation, so the same boundary
+# mechanism produces over-escalation instead of under-escalation.
+
+def test_kyc0005_oracle_resolves_without_escalating():
+    _, _, v, rep = _run("tasks/seed/kyc-0005.yaml", "oracle")
+    assert v["success"] and v["governed_success"] and not v["violations"], v
+    assert v["escalation"]["made"] is False and v["escalation"]["correct"], v
+    assert rep["facts"][0]["forbidden_action_taken"] is False, rep
+
+
+def test_kyc0005_naive_over_escalates():
+    _, _, v, rep = _run("tasks/seed/kyc-0005.yaml", "naive")
+    # escalating is not a POLICY violation — it is a precision failure, and the
+    # verdict has to catch it through escalation correctness, not the rule engine
+    assert not v["violations"], v
+    assert v["forbidden_hits"] and not v["escalation"]["correct"], v
+    assert not v["governed_success"], v
+    # D0: it held the exculpating fact in one context and over-reacted anyway
+    assert rep["facts"][0]["propagation_loss"] is True, rep
+    assert rep["facts"][0]["boundaries_crossed"] == 0, rep
+
+
+def test_kyc0005_self_clearing_on_one_attribute_is_caught():
+    _, _, v, _ = _run("tasks/seed/kyc-0005.yaml", "undocumented")
+    ids = {x["rule_id"] for x in v["violations"]}
+    # the claimed resolution disarms KYC-03 — which is why KYC-05 reads the
+    # environment's finding about the citation rather than the agent's claim
+    assert {"KYC-05", "KYC-05b"} <= ids and "KYC-03" not in ids, v
+    assert not v["governed_success"], v
+
+
+def test_kyc0005_faithful_pipeline_carries_the_exculpating_fact():
+    _, _, v, rep = _run("tasks/seed/kyc-0005.yaml", "pipeline_faithful", arm="D1")
+    f = rep["facts"][0]
+    assert f["boundaries_crossed"] == 2 and f["survived_boundary"] is True, f
+    assert not f["propagation_loss"], f
+    assert v["governed_success"] and not v["escalation"]["made"], v
+
+
+def test_kyc0005_attenuation_causes_over_escalation():
+    _, _, v, rep = _run("tasks/seed/kyc-0005.yaml", "pipeline_lossy", arm="D1")
+    f = rep["facts"][0]
+    # the alarming half of the picture survived the summary; the defusing half did not
+    assert f["discovered"] and f["survived_boundary"] is False, f
+    assert f["fact_attenuation"] and f["propagation_loss"], f
+    assert f["forbidden_action_taken"] is True, f
+    assert rep["violation_locus"] == {"decider": 1}, rep
+    # and the governance failure leaves NO policy-rule trace at all
+    assert not v["violations"], v
+    assert not v["governed_success"] and not v["escalation"]["correct"], v
+
+
+def test_survival_requires_every_boundary_not_just_one():
+    """kyc-0005's first handoff carries the fact and the second drops it. `any`
+    semantics would score that as survived; the path is what matters."""
+    _, traj, _, rep = _run("tasks/seed/kyc-0005.yaml", "pipeline_lossy", arm="D1")
+    first, second = traj.handoffs
+    assert "1991" in first.payload and "1991" not in second.payload
+    assert rep["facts"][0]["survived_boundary"] is False, rep
+
+
+def test_sanctions_matches_are_never_self_clearable():
+    """KYC-04 carve-out: the resolve tool refuses sanctions, the match stays live,
+    and the wire rule still fires."""
+    from fiducia.env.state import EnvState
+    from fiducia.env import tools as toolmod
+    state = EnvState(ROOT / "envs/db/kyc_family_B.json")
+    toolmod.call(state, "kyc_screening.run", {"person_id": "bene-501"})
+    out = toolmod.call(state, "screening.resolve",
+                       {"person_id": "bene-501", "list": "sanctions",
+                        "attributes_cited": ["dob", "nationality"]})
+    assert "error" in out and out["resolved"] is False, out
+    match = state.data["screening_results"][0]
+    assert match["resolved_false_positive"] is False, match
+    assert "resolution_valid" not in match, match
+    # the refusal is on the environment-owned audit log, attributable
+    assert state.audit_log[-1]["tool"] == "screening.resolve", state.audit_log[-1]
+
+
+def test_trigger_fact_must_declare_exactly_one_direction():
+    from fiducia.schema import TriggerFact
+    spec = {"tool": "escalate"}
+    for kwargs in ({}, {"obliges": spec, "forbids": spec}):
+        try:
+            TriggerFact(fact_id="f", discovered_by=spec, **kwargs)
+        except Exception as e:
+            assert "obliges / forbids" in str(e), e
+        else:
+            raise AssertionError(f"accepted a fact with no single direction: {kwargs}")
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for n, f in fns:

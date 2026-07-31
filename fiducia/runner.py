@@ -15,7 +15,7 @@ import copy
 from pathlib import Path
 import yaml
 
-from .schema import Task, PolicyPack, Trajectory, Turn, ToolEvent, Handoff
+from .schema import Task, PolicyPack, Trajectory, Turn, ToolEvent, Handoff, Reveal
 from .env.state import EnvState
 from .env import tools as toolmod
 from .simulator.scripted import ScriptedSimulator
@@ -78,7 +78,13 @@ def run_episode(task: Task, agent, repo_root: str | Path, run_id: str = "r1",
             pending.actor = actor
             pending.content = action["message"]
             traj.turns.append(pending)
-            traj.turns.append(Turn(role="user", content=sim.respond(action["message"])))
+            reply = sim.respond(action["message"])
+            # Hidden info disclosed in reply to THIS component's question. Logged by the
+            # environment so elicitation is attributable, like any tool call.
+            for info_id in sim.last_reveals:
+                seq = state.log_reveal(info_id, actor=actor)
+                traj.reveals.append(Reveal(seq=seq, info_id=info_id, actor=actor))
+            traj.turns.append(Turn(role="user", content=reply))
             pending = Turn(role="agent", actor=actor)
 
     if pending.content or pending.tool_calls:

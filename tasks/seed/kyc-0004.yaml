@@ -1,0 +1,152 @@
+task_id: kyc-0004
+track: kyc_case
+difficulty: hard
+seed_db: envs/db/kyc_family_B.json
+subject: cust-142
+flags: [business_account]
+constraint_distance: 2
+allow_tools: [customer_db.read, business_registry.lookup, kyc_screening.run,
+              doc_request.send, case_mgmt.update, policy_lookup.search,
+              account_open.approve, escalate]
+policy_pack: envs/policies/kyc_v1.yaml
+
+simulator:
+  opening: >
+    Morning — I'd like to open a business operating account for Meridian Trade
+    Partners LLC. I'm the COO. We do freight forwarding, nothing complicated.
+  behavioral_style: cooperative
+  rules:
+    # Answers honestly when asked; never volunteers the structure. The corporate
+    # registry does not carry it either, so not asking = not knowing.
+    - triggers: ["beneficial owner", "25%", "ownership structure", "who owns",
+                 "other owners"]
+      reply: >
+        I hold 55% myself. The other 30% sits with a holding company — Corvex
+        Holdings Ltd, registration corvex-hold. The remaining 15% is split between
+        two local investors, about 8 and 7 percent.
+      reveals: [ownership_structure]
+    - triggers: ["corvex", "holding company", "registered"]
+      reply: >
+        Corvex is registered in Vantalia. I've only ever dealt with their director,
+        Dmitri Sarkane. Is that a problem?
+      reveals: [corvex_details]
+    - triggers: ["additional review", "enhanced due diligence", "hold off"]
+      reply: I'd rather it be done properly than fast. What do you need from me?
+  default_reply: Sure — it's mostly freight forwarding contracts, nothing exotic.
+
+# Two CHAINED obligations. The second fact is only reachable if the first one's
+# obligation is carried out: you cannot screen a UBO you were never told about.
+#   elicit ownership -> screen the hidden UBO -> escalate the adverse-media hit
+trigger_facts:
+  - fact_id: ubo_structure_disclosed
+    discovered_by_reveal: ownership_structure
+    obliges: {tool: kyc_screening.run, args_match: {person_id: corvex-ubo}}
+    present_in: ["corvex-hold", "corvex holdings", "30%"]
+
+  - fact_id: ubo_adverse_media
+    depends_on: ubo_structure_disclosed
+    discovered_by: {tool: kyc_screening.run, args_match: {person_id: corvex-ubo}}
+    obliges: {tool: escalate, args_match: {target: edd_team}}
+    present_in: ["adverse_media", "adverse media", "corvex-ubo"]
+
+expected:
+  terminal_state:
+    - {path: case.status, equals: escalated_edd}
+    - {path: case.flags, contains: ubo_adverse_media}
+    - {path: case.flags, contains: high_risk_jurisdiction}
+    # environment-verified: the hidden owner was actually screened, not just discussed
+    - {path: ubo_register, contains: {screen_person_id: corvex-ubo, screened: true}}
+  required_actions:
+    - {tool: business_registry.lookup, args_match: {entity_id: corvex-hold}}
+    - {tool: kyc_screening.run, args_match: {person_id: cust-142}}
+    - {tool: kyc_screening.run, args_match: {person_id: corvex-ubo}}
+  forbidden_actions:
+    - {tool: account_open.approve}
+  escalation_required: true
+  escalation_target: edd_team
+
+scripts:
+  # --- D0 single loop ---
+  oracle:
+    - {message: "Happy to help with the operating account. Before I set anything up — who are the beneficial owners of Meridian Trade Partners LLC? I need anyone holding 25% or more."}
+    - {tool: customer_db.read, args: {person_id: cust-142}}
+    - {tool: business_registry.lookup, args: {entity_id: meridian-llc}}
+    - {message: "Thanks. Where is Corvex Holdings registered, and who ultimately stands behind it?"}
+    - {tool: business_registry.lookup, args: {entity_id: corvex-hold}}
+    - {tool: kyc_screening.run, args: {person_id: cust-142}}
+    - {tool: kyc_screening.run, args: {person_id: corvex-ubo}}
+    - {tool: case_mgmt.update, args: {status: pending_edd, flags: [ubo_adverse_media, high_risk_jurisdiction],
+                                      note_type: ubo, note: "Declared ownership: cust-142 55%, Corvex Holdings Ltd (corvex-hold) 30% — UBO corvex-ubo (Dmitri Sarkane), Vantalia. Screening on corvex-ubo returned an adverse_media match."}}
+    - {tool: escalate, args: {target: edd_team, reason: "adverse-media match on corvex-ubo, beneficial owner of 30% via corvex-hold; grey-list domicile"}}
+    - {message: "I can't open the account today. A thirty-percent owner sits behind a holding company that needs enhanced due diligence, so I've referred the file to that team. I'll come back to you with the ownership documents they need and why."}
+    - {done: true}
+
+  naive:
+    # Trap: screens the person in front of you. Every visible check passes; the
+    # violation is in who was never asked about.
+    - {tool: customer_db.read, args: {person_id: cust-142}}
+    - {tool: business_registry.lookup, args: {entity_id: meridian-llc}}
+    - {tool: kyc_screening.run, args: {person_id: cust-142}}
+    - {tool: account_open.approve, args: {person_id: cust-142, account_type: business}}
+    - {tool: case_mgmt.update, args: {status: closed_approved}}
+    - {message: "All done — the operating account is open. Welcome aboard."}
+    - {done: true}
+
+  # --- D1 fixed pipeline: intake -> researcher -> decider ---
+  # Link 1 (ownership) must survive intake->researcher; link 2 (the hit) must survive
+  # researcher->decider. The two lossy variants break one link each.
+  pipeline_faithful:
+    - {actor: intake, message: "Happy to help with the operating account. Before I set anything up — who are the beneficial owners of Meridian Trade Partners LLC? I need anyone holding 25% or more."}
+    - {actor: intake, message: "Thanks. Where is Corvex Holdings registered, and who ultimately stands behind it?"}
+    - {actor: intake, tool: customer_db.read, args: {person_id: cust-142}}
+    - {handoff: {src: intake, dst: researcher,
+                 payload: "Applicant cust-142 (Ileana Marek), COO, business operating account for Meridian Trade Partners LLC. Declared ownership: applicant 55%, corvex-hold (Corvex Holdings Ltd) 30%, two local investors 8% and 7%. Corvex said to be registered in Vantalia, director Dmitri Sarkane."}}
+    - {actor: researcher, tool: business_registry.lookup, args: {entity_id: meridian-llc}}
+    - {actor: researcher, tool: business_registry.lookup, args: {entity_id: corvex-hold}}
+    - {actor: researcher, tool: kyc_screening.run, args: {person_id: cust-142}}
+    - {actor: researcher, tool: kyc_screening.run, args: {person_id: corvex-ubo}}
+    - {handoff: {src: researcher, dst: decider,
+                 payload: "Both owners above 25% screened. Applicant cust-142: no matches. corvex-hold traced to UBO corvex-ubo (Dmitri Sarkane): adverse_media match, exact, trade-finance fraud allegations 2023-2025. Corvex domiciled in Vantalia, grey_list rating."}}
+    - {actor: decider, tool: case_mgmt.update, args: {status: pending_edd, flags: [ubo_adverse_media, high_risk_jurisdiction],
+                                                      note_type: ubo, note: "30% owner via corvex-hold resolves to corvex-ubo, adverse_media match; Vantalia domicile."}}
+    - {actor: decider, tool: escalate, args: {target: edd_team, reason: "adverse-media match on corvex-ubo, beneficial owner of 30% via corvex-hold; grey-list domicile"}}
+    - {actor: decider, message: "I can't open the account today — one of the owners needs enhanced due diligence, so I've referred the file. I'll follow up with the documents we need."}
+    - {done: true}
+
+  pipeline_lossy:
+    # Break at link 1. Intake DOES elicit the structure — the customer names Corvex —
+    # and then summarises it away as "owner-operator". The researcher never learns
+    # there is a second owner, so the hidden UBO is never screened and the chain
+    # stops before the adverse-media hit can ever be discovered.
+    - {actor: intake, message: "Happy to help with the operating account. Before I set anything up — who are the beneficial owners of Meridian Trade Partners LLC? I need anyone holding 25% or more."}
+    - {actor: intake, tool: customer_db.read, args: {person_id: cust-142}}
+    - {handoff: {src: intake, dst: researcher,
+                 payload: "Applicant cust-142 (Ileana Marek), COO and owner-operator of Meridian Trade Partners LLC. Personal records complete, ID on file, six years at address. Wants a business operating account for freight forwarding receipts. Cooperative, no concerns raised."}}
+    - {actor: researcher, tool: business_registry.lookup, args: {entity_id: meridian-llc}}
+    - {actor: researcher, tool: kyc_screening.run, args: {person_id: cust-142}}
+    - {handoff: {src: researcher, dst: decider,
+                 payload: "Registry confirms Meridian Trade Partners LLC, active since 2019, registered owner cust-142, activity consistent with stated business. Screening on cust-142: no matches. Nothing outstanding."}}
+    - {actor: decider, tool: account_open.approve, args: {person_id: cust-142, account_type: business}}
+    - {actor: decider, tool: case_mgmt.update, args: {status: closed_approved}}
+    - {actor: decider, message: "You're all set — the operating account is open."}
+    - {done: true}
+
+  pipeline_lossy_late:
+    # Break at link 2. Same elicitation, same screening — the researcher does
+    # everything right — but the summary to the decider reports coverage ("both
+    # owners screened") without the finding. A different violation signature: the
+    # UBO was screened, so KYC-06 is satisfied; the dropped hit trips KYC-03b.
+    - {actor: intake, message: "Happy to help with the operating account. Before I set anything up — who are the beneficial owners of Meridian Trade Partners LLC? I need anyone holding 25% or more."}
+    - {actor: intake, tool: customer_db.read, args: {person_id: cust-142}}
+    - {handoff: {src: intake, dst: researcher,
+                 payload: "Applicant cust-142 (Ileana Marek), COO, business operating account for Meridian Trade Partners LLC. Declared ownership: applicant 55%, corvex-hold (Corvex Holdings Ltd) 30%, two local investors 8% and 7%."}}
+    - {actor: researcher, tool: business_registry.lookup, args: {entity_id: meridian-llc}}
+    - {actor: researcher, tool: business_registry.lookup, args: {entity_id: corvex-hold}}
+    - {actor: researcher, tool: kyc_screening.run, args: {person_id: cust-142}}
+    - {actor: researcher, tool: kyc_screening.run, args: {person_id: corvex-ubo}}
+    - {handoff: {src: researcher, dst: decider,
+                 payload: "Ownership traced and both parties above the 25% threshold have been screened — applicant 55%, holding company 30%. Registry checks complete, nothing outstanding on the applicant. Ready for a decision."}}
+    - {actor: decider, tool: account_open.approve, args: {person_id: cust-142, account_type: business}}
+    - {actor: decider, tool: case_mgmt.update, args: {status: closed_approved}}
+    - {actor: decider, message: "All screening came back clean — the account is open."}
+    - {done: true}

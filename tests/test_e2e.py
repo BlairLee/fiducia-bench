@@ -100,6 +100,85 @@ def test_d0_has_no_boundary_to_lose_the_fact_at():
     assert rep["facts"][0]["survived_boundary"] is None, rep
 
 
+# ---------- phase 1c: chained facts (kyc-0004) ----------
+# Chain: elicit ownership -> screen the hidden UBO -> escalate the adverse-media hit.
+# Each link has its own boundary, so the chain can break in two distinguishable places.
+
+def test_kyc0004_oracle_passes():
+    _, _, v, rep = _run("tasks/seed/kyc-0004.yaml", "oracle")
+    assert v["success"] and v["governed_success"] and not v["violations"], v
+    assert all(f["discovered"] and f["obliged_action_taken"] for f in rep["facts"]), rep
+    assert rep["chain_broken_at"] is None, rep
+
+
+def test_kyc0004_elicitation_is_recorded_by_the_environment():
+    _, traj, _, rep = _run("tasks/seed/kyc-0004.yaml", "oracle")
+    # the conversational disclosure is an env-owned audit entry, not an agent claim
+    assert [r.info_id for r in traj.reveals] == ["ownership_structure", "corvex_details"]
+    assert {"_reveal"} <= {e["tool"] for e in traj.env_audit_log}
+    # and it is what discovers the first fact
+    assert rep["facts"][0]["discovered_at"] == traj.reveals[0].seq, rep
+
+
+def test_kyc0004_naive_never_elicits_the_structure():
+    _, _, v, rep = _run("tasks/seed/kyc-0004.yaml", "naive")
+    # screening the person in front of you passes every visible check
+    assert "KYC-06" in {x["rule_id"] for x in v["violations"]}, v
+    assert not v["governed_success"] and v["forbidden_hits"], v
+    # elicitation failure, not a boundary failure: the fact never surfaced at all
+    assert rep["facts"][0]["discovered"] is False, rep
+    assert rep["chain_broken_at"] == "ubo_structure_disclosed", rep
+
+
+def test_kyc0004_faithful_pipeline_carries_both_links():
+    _, _, v, rep = _run("tasks/seed/kyc-0004.yaml", "pipeline_faithful", arm="D1")
+    assert rep["actors"] == ["intake", "researcher", "decider"], rep
+    assert rep["n_handoffs"] == 2, rep
+    assert all(f["survived_boundary"] and f["obliged_action_taken"]
+               for f in rep["facts"]), rep
+    assert rep["chain_broken_at"] is None, rep
+    assert v["governed_success"], v
+
+
+def test_kyc0004_chain_breaks_at_the_first_link():
+    _, _, v, rep = _run("tasks/seed/kyc-0004.yaml", "pipeline_lossy", arm="D1")
+    a, b = rep["facts"]
+    # the customer DID disclose it; the intake summary is what dropped it
+    assert a["discovered"] and a["survived_boundary"] is False, a
+    assert a["propagation_loss"] and a["fact_attenuation"], a
+    # the downstream fact was unreachable — not an independent failure
+    assert b["discovered"] is False and b["blocked_upstream"] is True, b
+    assert not b["propagation_loss"], b
+    assert rep["chain_broken_at"] == "ubo_structure_disclosed", rep
+    assert "KYC-06" in {x["rule_id"] for x in v["violations"]}, v
+    assert not v["governed_success"], v
+    assert rep["escalation_diffusion"] is True, rep
+    assert rep["violation_locus"] == {"decider": 1}, rep
+
+
+def test_kyc0004_chain_breaks_at_the_second_link():
+    _, _, v, rep = _run("tasks/seed/kyc-0004.yaml", "pipeline_lossy_late", arm="D1")
+    a, b = rep["facts"]
+    # link 1 held: the UBO was found and screened
+    assert a["survived_boundary"] is True and a["obliged_action_taken"], a
+    # link 2 dropped the finding while reporting the coverage
+    assert b["discovered"] and b["survived_boundary"] is False, b
+    assert b["propagation_loss"] and not b["blocked_upstream"], b
+    assert rep["chain_broken_at"] == "ubo_adverse_media", rep
+    assert rep["escalation_diffusion"] is True, rep
+    assert not v["governed_success"], v
+
+
+def test_kyc0004_the_two_breaks_have_different_violation_signatures():
+    _, _, v_early, _ = _run("tasks/seed/kyc-0004.yaml", "pipeline_lossy", arm="D1")
+    _, _, v_late, _ = _run("tasks/seed/kyc-0004.yaml", "pipeline_lossy_late", arm="D1")
+    early = {x["rule_id"] for x in v_early["violations"]}
+    late = {x["rule_id"] for x in v_late["violations"]}
+    # never screened the UBO vs. screened it and buried the result
+    assert "KYC-06" in early and "KYC-03b" not in early, v_early
+    assert "KYC-03b" in late and "KYC-06" not in late, v_late
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for n, f in fns:

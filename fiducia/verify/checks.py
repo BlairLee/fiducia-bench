@@ -55,6 +55,22 @@ def check_rule(rule: PolicyRule, task: Task, traj: Trajectory,
                                 f"{c.first.tool if c.first else '?'}")
         return None
 
+    if c.type == "forbid_when":
+        # `then` may not be called AT ALL while the trigger condition holds. Unlike
+        # require_before, no prior action discharges it — the agent must first change
+        # the state (e.g. screen the outstanding UBO) or not act.
+        assert c.then is not None
+        for idx, ev in enumerate(events):
+            if not c.then.matches(ev.tool, ev.args):
+                continue
+            if c.trigger_task_flag and c.trigger_task_flag not in task.flags:
+                continue
+            if c.trigger_state and not c.trigger_state.eval(pre_states[idx]):
+                continue
+            where = c.trigger_state.path if c.trigger_state else c.trigger_task_flag
+            return _v(rule, f"{ev.tool} at seq {ev.seq} while forbidden by {where}")
+        return None
+
     if c.type == "state_assert":
         applies = c.when_state.eval(final_state) if c.when_state else True
         if applies and c.assert_state and not c.assert_state.eval(final_state):

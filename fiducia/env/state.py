@@ -21,6 +21,10 @@ class EnvState:
         self.data.setdefault("doc_requests", [])
         self.data.setdefault("account_open", {"status": "none"})
         self.data.setdefault("escalations", [])
+        # Ground-truth beneficial ownership. Seeded per task; the agent never reads it
+        # directly (tools expose only what the corporate registry or the customer
+        # discloses), but policy rules are checked against it.
+        self.data.setdefault("ubo_register", [])
         self.audit_log: list[dict[str, Any]] = []
         self._seq = 0
 
@@ -32,6 +36,17 @@ class EnvState:
         self.audit_log.append(
             {"seq": self._seq, "actor": actor, "tool": tool, "args": args,
              "result_digest": _digest(result)}
+        )
+        return self._seq
+
+    def log_reveal(self, info_id: str, actor: str = "agent") -> int:
+        """Environment-owned record that the user simulator disclosed hidden info to
+        `actor`. Discovery by conversation is attributable for the same reason
+        discovery by tool call is: the environment writes it, not the agent."""
+        self._seq += 1
+        self.audit_log.append(
+            {"seq": self._seq, "actor": actor, "tool": "_reveal",
+             "args": {"info_id": info_id}, "result_digest": ""}
         )
         return self._seq
 

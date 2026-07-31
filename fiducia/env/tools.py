@@ -39,6 +39,11 @@ def customer_db_read(state: EnvState, args: dict[str, Any]) -> Any:
 def kyc_screening_run(state: EnvState, args: dict[str, Any]) -> Any:
     pid = args.get("person_id")
     matches = state.data.get("screening", {}).get(pid, [])
+    # Screening a person also discharges the screening obligation for any beneficial
+    # owner that resolves to them (a corporate owner resolves to its natural-person UBO).
+    for owner in state.data.get("ubo_register", []):
+        if owner.get("screen_person_id") == pid:
+            owner["screened"] = True
     for m in matches:
         entry = {**m, "person_id": pid, "resolved_false_positive": False}
         # de-dupe on (person_id, list)
@@ -48,6 +53,22 @@ def kyc_screening_run(state: EnvState, args: dict[str, Any]) -> Any:
         ):
             state.data["screening_results"].append(entry)
     return {"person_id": pid, "matches": matches}
+
+
+@tool("business_registry.lookup")
+def business_registry_lookup(state: EnvState, args: dict[str, Any]) -> Any:
+    """Corporate registry lookup by entity id.
+
+    Returns only what a registry actually captures. Beneficial ownership held through
+    a corporate vehicle is deliberately absent from the operating company's record —
+    it has to be elicited from the customer, and the named vehicle then looked up in
+    turn. That two-step is the fact chain kyc-0004 is built around.
+    """
+    eid = args.get("entity_id")
+    rec = state.data.get("business_registry", {}).get(eid)
+    if rec is None:
+        return {"error": f"no such entity: {eid}"}
+    return {"entity_id": eid, **rec}
 
 
 @tool("doc_request.send")

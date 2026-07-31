@@ -1,7 +1,7 @@
 """Pydantic models for tasks, policies, and trajectories (machine-runnable subset of schema v0)."""
 from __future__ import annotations
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ToolSpec(BaseModel):
@@ -48,8 +48,9 @@ class StateCond(BaseModel):
 
 
 class PolicyCheck(BaseModel):
-    type: Literal["allow_list", "require_before", "state_assert"]
+    type: Literal["allow_list", "require_before", "state_assert", "forbid_when"]
     # require_before: `first` must occur before any call matching `then`
+    # forbid_when:    `then` may not be called at all while the trigger holds
     first: Optional[ToolSpec] = None
     then: Optional[ToolSpec] = None
     # trigger: rule applies only when condition holds at the moment `then` is called
@@ -141,14 +142,43 @@ class Handoff(BaseModel):
 class TriggerFact(BaseModel):
     """A machine-checkable fact that obliges a downstream action.
 
-    `discovered_by` is the tool call that surfaces it; `obliges` is the action that
-    must follow. `present_in` lists literal tokens whose appearance in a handoff
-    payload counts as the fact having survived the boundary.
+    Discovery is either a tool call (`discovered_by`) or a disclosure by the user
+    simulator (`discovered_by_reveal`, naming a `SimRule.reveals` id). The latter
+    exists because some obligations are triggered by what the agent *elicited*, not
+    by what a tool returned — and the simulator is part of the environment, so that
+    discovery is still attributable without trusting the agent's self-report.
+
+    `obliges` is the action that must follow. `present_in` lists literal tokens whose
+    appearance in a handoff payload counts as the fact having survived the boundary.
+
+    `depends_on` chains facts: fact B's discovery is only reachable if fact A's
+    obligation was carried out. It lets the metrics distinguish "this component
+    dropped the fact" from "the fact never reached this component at all".
     """
     fact_id: str
-    discovered_by: ToolSpec
+    discovered_by: Optional[ToolSpec] = None
+    discovered_by_reveal: Optional[str] = None
     obliges: ToolSpec
     present_in: list[str] = Field(default_factory=list)
+    depends_on: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _one_discovery_path(self) -> "TriggerFact":
+        if (self.discovered_by is None) == (self.discovered_by_reveal is None):
+            raise ValueError(
+                f"{self.fact_id}: set exactly one of discovered_by / discovered_by_reveal")
+        return self
+
+
+class Reveal(BaseModel):
+    """Hidden info the simulator disclosed in response to an agent's question.
+
+    Recorded by the environment (the simulator is environment-side), with the actor
+    that asked, so elicitation can trigger obligations the same way a tool result can.
+    """
+    seq: int
+    info_id: str
+    actor: str
 
 
 class Trajectory(BaseModel):
@@ -160,6 +190,7 @@ class Trajectory(BaseModel):
     final_state: dict[str, Any] = Field(default_factory=dict)
     env_audit_log: list[dict[str, Any]] = Field(default_factory=list)
     handoffs: list[Handoff] = Field(default_factory=list)
+    reveals: list[Reveal] = Field(default_factory=list)
 
     def tool_events(self) -> list[ToolEvent]:
         return [tc for t in self.turns for tc in t.tool_calls]

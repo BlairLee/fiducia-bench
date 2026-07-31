@@ -33,14 +33,19 @@ The author works on enterprise agent systems professionally. This repo must stay
 
 ## Current status
 
-Phase 1b complete. `python tests/test_e2e.py` → 10 passing.
+Phase 1c complete. `python tests/test_e2e.py` → 17 passing.
 
 - Environment: seeded JSON state + deterministic tools, **environment-owned audit log**
-- Simulator: scripted, trigger-substring driven (LLM simulator is Phase 2)
-- Verifiers: deterministic policy checks via **trajectory replay**
-- Decomposition metrics: actor attribution, handoff logging, fact attenuation
+- Simulator: scripted, trigger-substring driven (LLM simulator is Phase 2). Hidden-info
+  disclosures are logged by the environment as `Reveal` records, so **elicitation is
+  attributable** and can trigger obligations the same way a tool result can
+- Verifiers: deterministic policy checks via **trajectory replay**. Check types:
+  `require_before`, `allow_list`, `state_assert`, `forbid_when`
+- Decomposition metrics: actor attribution, handoff logging, fact attenuation, and
+  **fact chains** (`TriggerFact.depends_on` → `blocked_upstream`, `chain_broken_at`)
 - Tasks: kyc-0001 (clean/precision control), kyc-0002 (SoF hidden info), kyc-0003
-  (fuzzy sanctions match, with `pipeline_faithful` vs `pipeline_lossy` variants)
+  (fuzzy sanctions match, with `pipeline_faithful` vs `pipeline_lossy` variants),
+  kyc-0004 (business account, chained facts, two lossy variants breaking each link)
 
 ## Non-negotiable design invariants
 
@@ -52,7 +57,7 @@ Break these and the benchmark stops being credible:
    evaluated against state *as it was* at each tool call — not the final state. See
    `verify/checks.py::_replay_states`.
 3. **Prefer deterministic checks.** Target ≥70% of policy rules checkable without a judge
-   (`require_before`, `allow_list`, `state_assert`). Judges are for genuinely soft rules only,
+   (`require_before`, `allow_list`, `state_assert`, `forbid_when`). Judges are for soft rules only,
    and must be calibrated against human labels.
 4. **Every metric is a pure function of (trajectory + task YAML).** This lets historical runs
    be re-scored when verifiers improve. Don't compute metrics during rollout.
@@ -100,25 +105,25 @@ discovery and obligated action.
 
 ## What's next (in order)
 
-1. **kyc-0004** — business account, hidden UBO. Two *chained* trigger facts (elicit ownership
-   → screen the hidden UBO). Will stress whether the registry handles fact chains.
-2. **kyc-0005** — PEP exact-name match that is a *resolvable false positive*. The obligation is
+1. **kyc-0005** — PEP exact-name match that is a *resolvable false positive*. The obligation is
    **negative**: must NOT escalate, and must document a two-attribute mismatch before
    approving. `TriggerFact.obliges` cannot express this today — likely needs `forbids` or
    `obliges_absence`. Mirror-image of 0004; together they prevent gaming escalation by
-   always escalating.
-3. Arm harness: real D0/D1/D2 implementations over the shared tool layer (scripted versions
+   always escalating. The new `forbid_when` check type covers the *policy* side of a
+   negative obligation; the *trigger-fact* side is still unexpressed.
+2. Arm harness: real D0/D1/D2 implementations over the shared tool layer (scripted versions
    first, to unit-test attribution).
-4. LLM user simulator against a local OpenAI-compatible endpoint; pin model + quantization +
+3. LLM user simulator against a local OpenAI-compatible endpoint; pin model + quantization +
    sampling params for reproducibility.
-5. Pilot: 20 tasks × 4 arms × 2 models × k=2 → measure per-episode cost before the full grid.
-6. Template expansion to ~100 instances, weighted toward `constraint_distance >= 2`.
+4. Pilot: 20 tasks × 4 arms × 2 models × k=2 → measure per-episode cost before the full grid.
+5. Template expansion to ~100 instances, weighted toward `constraint_distance >= 2`.
 
 ## Conventions
 
 - Python ≥3.11, pydantic v2, PyYAML. No heavy deps without a reason.
 - Tasks are YAML; scripts live under `scripts:` keyed by name (`oracle`, `naive`,
-  `pipeline_faithful`, `pipeline_lossy`).
+  `pipeline_faithful`, `pipeline_lossy`; add `pipeline_lossy_late` when a task has a
+  fact chain with more than one link to break).
 - Run tests with `python tests/test_e2e.py` (plain asserts, pytest-compatible).
 - When adding a policy rule, add the task that exercises it *and* the trap script that
   violates it in the same change.

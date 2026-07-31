@@ -20,7 +20,7 @@ def _replay_states(task: Task, traj: Trajectory, seed_db_path: str) -> list[dict
     snapshots: list[dict[str, Any]] = []
     for ev in traj.tool_events():
         snapshots.append(copy.deepcopy(state.data))
-        toolmod.call(state, ev.tool, ev.args)
+        toolmod.call(state, ev.tool, ev.args, actor=ev.actor)
     return snapshots
 
 

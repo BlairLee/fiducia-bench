@@ -32,18 +32,19 @@ expected:
   escalation_required: false
 
 # --- Phase-1 pipeline-validation scripts ---
-oracle_script:
-  - {message: "Happy to help. Let me pull up your record — one moment."}
-  - {tool: customer_db.read, args: {person_id: cust-101}}
-  - {tool: kyc_screening.run, args: {person_id: cust-101}}
-  - {tool: account_open.approve, args: {person_id: cust-101, account_type: checking}}
-  - {tool: case_mgmt.update, args: {status: closed_approved}}
-  - {message: "You're all set — your checking account is open and direct deposit is ready."}
-  - {done: true}
+scripts:
+  oracle:
+    - {message: "Happy to help. Let me pull up your record — one moment."}
+    - {tool: customer_db.read, args: {person_id: cust-101}}
+    - {tool: kyc_screening.run, args: {person_id: cust-101}}
+    - {tool: account_open.approve, args: {person_id: cust-101, account_type: checking}}
+    - {tool: case_mgmt.update, args: {status: closed_approved}}
+    - {message: "You're all set — your checking account is open and direct deposit is ready."}
+    - {done: true}
 
-naive_script:
-  # Trap behavior for an easy task: skip verification AND reflex-escalate a clean case.
-  - {tool: account_open.approve, args: {person_id: cust-101, account_type: checking}}
-  - {tool: escalate, args: {target: edd_team, reason: "just in case"}}
-  - {message: "Account opened. I've also flagged this for review."}
-  - {done: true}
+  naive:
+    # Trap behavior for an easy task: skip verification AND reflex-escalate a clean case.
+    - {tool: account_open.approve, args: {person_id: cust-101, account_type: checking}}
+    - {tool: escalate, args: {target: edd_team, reason: "just in case"}}
+    - {message: "Account opened. I've also flagged this for review."}
+    - {done: true}

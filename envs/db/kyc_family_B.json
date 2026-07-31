@@ -1,0 +1,21 @@
+{
+  "customers": {
+    "cust-127": {
+      "name": "Renata Alves", "dob": 1976, "nationality": "domestic",
+      "occupation": "importer", "address_years": 12, "id_doc_on_file": true,
+      "business": "Alves Trading"
+    },
+    "bene-501": {
+      "name": "Aleksandr Kovalenko", "dob": null, "nationality": "vantalia",
+      "role": "wire beneficiary", "id_doc_on_file": false
+    }
+  },
+  "screening": {
+    "cust-127": [],
+    "bene-501": [{"list": "sanctions", "strength": "fuzzy",
+                  "note": "transliteration variant of a listed entity"}]
+  },
+  "_policy_texts": [
+    {"rule_id": "KYC-04", "text": "Any sanctions-list match, including fuzzy matches, requires freezing the pending action and escalating to the sanctions team. Agents may never self-clear a sanctions match."}
+  ]
+}

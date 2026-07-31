@@ -24,10 +24,22 @@ class EnvState:
         self.audit_log: list[dict[str, Any]] = []
         self._seq = 0
 
-    def log(self, tool: str, args: dict[str, Any], result: Any) -> int:
+    def log(self, tool: str, args: dict[str, Any], result: Any,
+            actor: str = "agent") -> int:
+        """Environment-owned audit entry. `actor` records WHICH component acted —
+        attribution must come from the environment, never from the agent."""
         self._seq += 1
         self.audit_log.append(
-            {"seq": self._seq, "tool": tool, "args": args, "result_digest": _digest(result)}
+            {"seq": self._seq, "actor": actor, "tool": tool, "args": args,
+             "result_digest": _digest(result)}
+        )
+        return self._seq
+
+    def log_handoff(self, src: str, dst: str, payload: str) -> int:
+        self._seq += 1
+        self.audit_log.append(
+            {"seq": self._seq, "actor": src, "tool": "_handoff",
+             "args": {"dst": dst}, "result_digest": _digest(payload)}
         )
         return self._seq
 

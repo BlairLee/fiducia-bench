@@ -106,9 +106,12 @@ class Task(BaseModel):
     policy_pack: str
     simulator: SimulatorSpec
     expected: Expectation
-    # Phase-1 scripted agents (pipeline validation only; unused in LLM runs)
-    oracle_script: list[dict[str, Any]] = Field(default_factory=list)
-    naive_script: list[dict[str, Any]] = Field(default_factory=list)
+    trigger_facts: list[TriggerFact] = Field(default_factory=list)
+    constraint_distance: int = 0   # boundaries the fact must cross under decomposed arms
+    # Scripted agents for pipeline validation (unused in LLM runs).
+    # `scripts` holds named variants, e.g. oracle / naive / pipeline_faithful /
+    # pipeline_lossy — the last two are multi-component and exercise attribution.
+    scripts: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
 
 
 class ToolEvent(BaseModel):
@@ -116,12 +119,36 @@ class ToolEvent(BaseModel):
     tool: str
     args: dict[str, Any]
     result: Any
+    actor: str = "agent"          # which component issued the call
 
 
 class Turn(BaseModel):
     role: Literal["user", "agent"]
     content: str = ""
+    actor: str = "agent"
     tool_calls: list[ToolEvent] = Field(default_factory=list)
+
+
+class Handoff(BaseModel):
+    """A payload crossing a component boundary. First-class because fact attenuation
+    is measured over exactly these objects."""
+    seq: int
+    src: str
+    dst: str
+    payload: str
+
+
+class TriggerFact(BaseModel):
+    """A machine-checkable fact that obliges a downstream action.
+
+    `discovered_by` is the tool call that surfaces it; `obliges` is the action that
+    must follow. `present_in` lists literal tokens whose appearance in a handoff
+    payload counts as the fact having survived the boundary.
+    """
+    fact_id: str
+    discovered_by: ToolSpec
+    obliges: ToolSpec
+    present_in: list[str] = Field(default_factory=list)
 
 
 class Trajectory(BaseModel):
@@ -129,8 +156,17 @@ class Trajectory(BaseModel):
     run_id: str
     agent_name: str
     turns: list[Turn] = Field(default_factory=list)
+    arm: str = "D0"
     final_state: dict[str, Any] = Field(default_factory=dict)
     env_audit_log: list[dict[str, Any]] = Field(default_factory=list)
+    handoffs: list[Handoff] = Field(default_factory=list)
 
     def tool_events(self) -> list[ToolEvent]:
         return [tc for t in self.turns for tc in t.tool_calls]
+
+    def actors(self) -> list[str]:
+        seen: list[str] = []
+        for ev in self.tool_events():
+            if ev.actor not in seen:
+                seen.append(ev.actor)
+        return seen

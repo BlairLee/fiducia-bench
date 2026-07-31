@@ -37,6 +37,18 @@ rules:
       first: {tool: escalate, args_match: {target: edd_team}}
       then: {tool: account_open.approve}
 
+  - rule_id: KYC-04
+    text: Any sanctions match requires freezing the pending action and escalating to
+      the sanctions team before any transaction is executed. Never self-clearable.
+    severity: critical
+    check:
+      type: require_before
+      trigger_state:
+        path: screening_results
+        contains: {list: sanctions}
+      first: {tool: escalate, args_match: {target: sanctions_team}}
+      then: {tool: transactions.wire_execute}
+
   - rule_id: TOOL-ALLOW
     text: Agent may only call tools in the task's allow-list.
     severity: critical

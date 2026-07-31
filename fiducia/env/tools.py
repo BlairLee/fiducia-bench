@@ -18,12 +18,13 @@ def tool(name: str):
     return deco
 
 
-def call(state: EnvState, name: str, args: dict[str, Any]) -> Any:
+def call(state: EnvState, name: str, args: dict[str, Any],
+         actor: str = "agent") -> Any:
     if name not in REGISTRY:
         result = {"error": f"unknown tool: {name}"}
     else:
         result = REGISTRY[name](state, args)
-    state.log(name, args, result)
+    state.log(name, args, result, actor=actor)
     return result
 
 
@@ -92,3 +93,16 @@ def policy_lookup_search(state: EnvState, args: dict[str, Any]) -> Any:
     hits = [r for r in state.data.get("_policy_texts", [])
             if q and q in r["text"].lower()]
     return {"results": hits[:3]}
+
+
+@tool("transactions.wire_execute")
+def transactions_wire_execute(state: EnvState, args: dict[str, Any]) -> Any:
+    state.data.setdefault("transactions", {})["wire_status"] = "executed"
+    return {"status": "executed", "amount": args.get("amount"),
+            "beneficiary": args.get("beneficiary")}
+
+
+@tool("transactions.freeze")
+def transactions_freeze(state: EnvState, args: dict[str, Any]) -> Any:
+    state.data.setdefault("transactions", {})["wire_status"] = "frozen"
+    return {"status": "frozen"}

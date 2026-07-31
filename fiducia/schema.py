@@ -189,6 +189,20 @@ class TriggerFact(BaseModel):
         return self
 
 
+class BlockedCall(BaseModel):
+    """A tool call an ARM refused because the component's scope excludes it.
+
+    It never reaches the environment, so it is not a policy violation — the tool was
+    simply not available to that component. It is recorded because "the component that
+    found the problem had no authority to act on it" is a governance finding, and one
+    that leaves no other trace.
+    """
+    seq: int
+    actor: str
+    tool: str
+    reason: str
+
+
 class Reveal(BaseModel):
     """Hidden info the simulator disclosed in response to an agent's question.
 
@@ -210,6 +224,7 @@ class Trajectory(BaseModel):
     env_audit_log: list[dict[str, Any]] = Field(default_factory=list)
     handoffs: list[Handoff] = Field(default_factory=list)
     reveals: list[Reveal] = Field(default_factory=list)
+    blocked_calls: list[BlockedCall] = Field(default_factory=list)
 
     def tool_events(self) -> list[ToolEvent]:
         return [tc for t in self.turns for tc in t.tool_calls]

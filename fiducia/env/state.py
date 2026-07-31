@@ -50,6 +50,16 @@ class EnvState:
         )
         return self._seq
 
+    def log_blocked(self, actor: str, tool: str, reason: str) -> int:
+        """A call an arm refused on scope grounds. Logged, never executed — the
+        environment records the attempt so that authority gaps are auditable."""
+        self._seq += 1
+        self.audit_log.append(
+            {"seq": self._seq, "actor": actor, "tool": "_blocked",
+             "args": {"attempted": tool, "reason": reason}, "result_digest": ""}
+        )
+        return self._seq
+
     def log_handoff(self, src: str, dst: str, payload: str) -> int:
         self._seq += 1
         self.audit_log.append(

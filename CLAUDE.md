@@ -33,8 +33,8 @@ The author works on enterprise agent systems professionally. This repo must stay
 
 ## Current status
 
-Phase 1c complete — seed set 0001–0005 is machine-runnable.
-`python tests/test_e2e.py` → 25 passing.
+Phase 1c complete — seed set 0001–0005 machine-runnable, arm harness built.
+`python tests/test_e2e.py` → 25 passing · `python tests/test_arms.py` → 13 passing.
 
 - Environment: seeded JSON state + deterministic tools, **environment-owned audit log**
 - Simulator: scripted, trigger-substring driven (LLM simulator is Phase 2). Hidden-info
@@ -50,6 +50,9 @@ Phase 1c complete — seed set 0001–0005 is machine-runnable.
 - Obligations run in **both directions**: `TriggerFact.obliges` (act) and `forbids`
   (an exculpating fact — do not act). Both score as `propagation_loss`, because
   under- and over-escalation are the same mechanism with opposite outcomes
+- Arms: `D0` single loop · `D1` fixed pipeline · `D2` orchestrator + scoped subagents,
+  driven by pluggable component **brains** (scripted now, LLM next). Arms own topology,
+  attribution, context assembly and tool scope; brains only choose the next action
 - Tasks: kyc-0001 (clean/precision control), kyc-0002 (SoF hidden info), kyc-0003
   (fuzzy sanctions match, with `pipeline_faithful` vs `pipeline_lossy` variants),
   kyc-0004 (business account, chained facts, two lossy variants breaking each link),
@@ -77,6 +80,11 @@ Break these and the benchmark stops being credible:
 7. **Where an agent asserts a judgement, the environment re-derives it.** `screening.resolve`
    stores the agent's claim and the environment's finding separately, and policy checks read
    only the finding. Never let a rule turn on the agent's own account of its work.
+8. **The topology assigns identity and context; the component never does.** A brain's output
+   is filtered to `arms/base.py::BRAIN_KEYS` and the actor is stamped by the arm, so a model
+   cannot name itself. Same for context: a component sees a tool result only if it made the
+   call, and a user reply only if it was active when it arrived (`ComponentContext`). Leaking
+   either across a boundary silently destroys the effect being measured.
 
 ## Layout
 
@@ -87,6 +95,9 @@ fiducia/
   env/tools.py           deterministic tools, @tool registry
   simulator/scripted.py  Phase-1 user simulator
   agents/base.py         ScriptedAgent; OpenAICompatAgent stub for Phase 2
+  agents/brain.py        Brain protocol + ScriptedBrain (one component's decisions)
+  arms/base.py           stamp() attribution, ComponentContext isolation
+  arms/d0.py d1.py d2.py one class per architecture; ARMS registry in __init__
   verify/checks.py       policy rules + task expectations -> verdict
   verify/decomposition.py  propagation loss, fact attenuation, violation locus, diffusion
   runner.py              episode loop; actor + handoff recording
@@ -116,18 +127,24 @@ discovery and obligated action.
 
 ## What's next (in order)
 
-1. Arm harness: real D0/D1/D2 implementations over the shared tool layer (scripted versions
-   first, to unit-test attribution). The seed set is complete, so the harness can be designed
-   against every obligation shape it will meet — including a task where the correct answer is
-   *not* to escalate.
-2. LLM user simulator against a local OpenAI-compatible endpoint; pin model + quantization +
-   sampling params for reproducibility.
+1. **LLM brain** — implement `Brain` against a local OpenAI-compatible endpoint: prompt
+   assembly per component (this is where factor **P** lives: P0 pastes the policy pack,
+   P1 exposes only `policy_lookup.search`), tool-schema serialisation, parsing back into
+   the brain action protocol. The arms need no changes.
+2. LLM user simulator on the same endpoint; pin model + quantization + sampling params for
+   reproducibility.
 3. Pilot: 20 tasks × 4 arms × 2 models × k=2 → measure per-episode cost before the full grid.
 4. Template expansion to ~100 instances, weighted toward `constraint_distance >= 2`.
 
-Smaller, open: kyc-0003 does not list `screening.resolve` in `allow_tools`, so the
-"self-clear a sanctions match" trap from its design doc is unreachable — the environment
-refuses the call, but no script attempts it and nothing scores the attempt.
+Smaller, open:
+- kyc-0003 does not list `screening.resolve` in `allow_tools`, so the "self-clear a sanctions
+  match" trap from its design doc is unreachable — the environment refuses the call, but no
+  script attempts it and nothing scores the attempt.
+- `Trajectory.blocked_calls` is recorded but no metric reads it yet. It is the direct
+  evidence for escalation-authority diffusion under D2 ("the component that found the
+  problem had no authority to act on it") and should feed that metric.
+- The CLI still drives task-YAML `scripts:` through `ScriptedAgent`; arms are constructed
+  programmatically. Wire `--arm` to the real arms once the LLM brain lands.
 
 ## Conventions
 
@@ -136,7 +153,10 @@ refuses the call, but no script attempts it and nothing scores the attempt.
   `pipeline_faithful`, `pipeline_lossy`; add `pipeline_lossy_late` when a task has a
   fact chain with more than one link to break, and a named script per additional trap —
   see kyc-0005's `undocumented`).
-- Run tests with `python tests/test_e2e.py` (plain asserts, pytest-compatible).
+- Run tests with `python tests/test_e2e.py` and `python tests/test_arms.py` (plain asserts,
+  pytest-compatible). `test_e2e` validates tasks and verifiers against the YAML fixture
+  scripts; `test_arms` validates orchestration mechanics with brains defined inline. Keep
+  them apart — mixing topology into task YAML makes both harder to change.
 - When adding a policy rule, add the task that exercises it *and* the trap script that
   violates it in the same change.
 

@@ -203,6 +203,19 @@ class BlockedCall(BaseModel):
     reason: str
 
 
+class LLMCall(BaseModel):
+    """One model call by one component. Carries the cost model and the parse-failure
+    rate, so both are properties of the trajectory and survive re-scoring."""
+    seq: int
+    actor: str
+    model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    latency_ms: float = 0.0
+    finish_reason: str = ""
+    parse_error: Optional[str] = None
+
+
 class Reveal(BaseModel):
     """Hidden info the simulator disclosed in response to an agent's question.
 
@@ -225,6 +238,8 @@ class Trajectory(BaseModel):
     handoffs: list[Handoff] = Field(default_factory=list)
     reveals: list[Reveal] = Field(default_factory=list)
     blocked_calls: list[BlockedCall] = Field(default_factory=list)
+    llm_calls: list[LLMCall] = Field(default_factory=list)
+    model_fingerprint: dict[str, Any] = Field(default_factory=dict)
 
     def tool_events(self) -> list[ToolEvent]:
         return [tc for t in self.turns for tc in t.tool_calls]

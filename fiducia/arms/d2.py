@@ -30,6 +30,7 @@ class D2Arm:
         self.name = f"D2:{orchestrator_name}+" + "+".join(sorted(subagents))
         self._active: str | None = None       # None = the orchestrator has the floor
         self._inbox: dict[str, str | None] = {}
+        self._refusal: dict[str, str] | None = None
         self._ctx = ComponentContext()
 
     @property
@@ -42,8 +43,10 @@ class D2Arm:
     def step(self, observation: dict[str, Any]) -> dict[str, Any]:
         actor = self.actor
         brain = self.subagents[self._active][0] if self._active else self.orchestrator
+        refusal, self._refusal = self._refusal, None
         action = brain.step(self._ctx.observe(
-            actor, observation, inbox=self._inbox.get(actor), scope=self._scope()))
+            actor, observation, inbox=self._inbox.get(actor), scope=self._scope(),
+            refusal=refusal))
 
         if self._active is None:
             return self._orchestrator_action(action, actor)
@@ -64,8 +67,10 @@ class D2Arm:
     def _subagent_action(self, action: dict[str, Any], actor: str) -> dict[str, Any]:
         scope = self._scope() or []
         if "tool" in action and action["tool"] not in scope:
-            return blocked(actor, str(action["tool"]),
-                           f"outside {actor} tool scope {sorted(scope)}")
+            reason = f"outside {actor} tool scope {sorted(scope)}"
+            # tell the component on its next turn, so it knows the call did not happen
+            self._refusal = {"tool": str(action["tool"]), "reason": reason}
+            return blocked(actor, str(action["tool"]), reason)
 
         # A subagent that reports back — or simply stops — returns the floor. Stopping
         # without a payload is a silent boundary, and it is left visible as one.

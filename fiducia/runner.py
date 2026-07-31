@@ -44,6 +44,16 @@ def run_episode(task: Task, agent, repo_root: str | Path, run_id: str = "r1",
                 arm: str = "D0") -> Trajectory:
     root = Path(repo_root)
     state = EnvState(root / task.seed_db)
+    # Factor P demands one corpus, two access modes: P0 pastes the policy pack into
+    # context, P1 leaves it retrievable through `policy_lookup.search`. If the tool
+    # searched the seed DB's abridged notes instead, P0 vs P1 would differ in policy
+    # CONTENT as well as access, and the comparison would mean nothing.
+    pack_path = root / task.policy_pack
+    if pack_path.exists():
+        state.data["_policy_texts"] = [
+            {"rule_id": r.rule_id, "text": r.text.strip()}
+            for r in load_pack(pack_path).rules
+        ]
     sim = ScriptedSimulator(task.simulator)
     # An arm knows its own topology; trust that over the caller's label so a trajectory
     # can never be filed under an architecture it did not actually run.
@@ -115,6 +125,10 @@ def run_episode(task: Task, agent, repo_root: str | Path, run_id: str = "r1",
 
     traj.final_state = copy.deepcopy(state.data)
     traj.env_audit_log = list(state.audit_log)
+    # Cost model and parse-failure rate belong to the trajectory, not to a side channel,
+    # so historical runs can be re-scored on both.
+    traj.llm_calls = list(getattr(agent, "call_log", None) or [])
+    traj.model_fingerprint = dict(getattr(agent, "model_fingerprint", None) or {})
     return traj
 
 

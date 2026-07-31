@@ -33,8 +33,9 @@ The author works on enterprise agent systems professionally. This repo must stay
 
 ## Current status
 
-Phase 1c complete — seed set 0001–0005 machine-runnable, arm harness built.
-`python tests/test_e2e.py` → 25 passing · `python tests/test_arms.py` → 13 passing.
+Phase 2 in progress — seed set 0001–0005, arm harness, and LLM components all built.
+Nothing has run against a real endpoint yet.
+`test_e2e.py` 25 · `test_arms.py` 13 · `test_llm.py` 17 — all hermetic, no network.
 
 - Environment: seeded JSON state + deterministic tools, **environment-owned audit log**
 - Simulator: scripted, trigger-substring driven (LLM simulator is Phase 2). Hidden-info
@@ -50,9 +51,15 @@ Phase 1c complete — seed set 0001–0005 machine-runnable, arm harness built.
 - Obligations run in **both directions**: `TriggerFact.obliges` (act) and `forbids`
   (an exculpating fact — do not act). Both score as `propagation_loss`, because
   under- and over-escalation are the same mechanism with opposite outcomes
-- Arms: `D0` single loop · `D1` fixed pipeline · `D2` orchestrator + scoped subagents,
-  driven by pluggable component **brains** (scripted now, LLM next). Arms own topology,
-  attribution, context assembly and tool scope; brains only choose the next action
+- Arms: `D0` single loop · `D1` fixed pipeline (intake→research→decide) · `D2`
+  orchestrator + scoped subagents, driven by pluggable component **brains**. Arms own
+  topology, attribution, context assembly and tool scope; brains only choose the action
+- LLM brain over any OpenAI-compatible endpoint (stdlib HTTP, injectable transport).
+  Factor **P** lives in prompt assembly: P0 pastes the pack, P1 leaves only
+  `policy_lookup.search`. Tool schemas are generated from `env.tools.SPECS`, so the model
+  is never described a tool in terms that differ from what it does
+- Cost + parse-failure rate are recorded on the trajectory (`llm_calls`,
+  `model_fingerprint`), never as a side channel
 - Tasks: kyc-0001 (clean/precision control), kyc-0002 (SoF hidden info), kyc-0003
   (fuzzy sanctions match, with `pipeline_faithful` vs `pipeline_lossy` variants),
   kyc-0004 (business account, chained facts, two lossy variants breaking each link),
@@ -96,6 +103,12 @@ fiducia/
   simulator/scripted.py  Phase-1 user simulator
   agents/base.py         ScriptedAgent; OpenAICompatAgent stub for Phase 2
   agents/brain.py        Brain protocol + ScriptedBrain (one component's decisions)
+  agents/llm/client.py   OpenAI-compatible client; injectable transport for tests
+  agents/llm/schema.py   ToolDoc -> function schema; control_finish/handoff/delegate
+  agents/llm/prompts.py  shared blocks + per-topology paragraph; P0/P1 policy access
+  agents/llm/parse.py    response -> action; parse failures returned, never swallowed
+  agents/llm/brain.py    LLMBrain: one component, one conversation, one call log
+  agents/llm/build.py    (task, arm, policy mode, client) -> runnable arm
   arms/base.py           stamp() attribution, ComponentContext isolation
   arms/d0.py d1.py d2.py one class per architecture; ARMS registry in __init__
   verify/checks.py       policy rules + task expectations -> verdict
@@ -127,14 +140,21 @@ discovery and obligated action.
 
 ## What's next (in order)
 
-1. **LLM brain** — implement `Brain` against a local OpenAI-compatible endpoint: prompt
-   assembly per component (this is where factor **P** lives: P0 pastes the policy pack,
-   P1 exposes only `policy_lookup.search`), tool-schema serialisation, parsing back into
-   the brain action protocol. The arms need no changes.
-2. LLM user simulator on the same endpoint; pin model + quantization + sampling params for
-   reproducibility.
-3. Pilot: 20 tasks × 4 arms × 2 models × k=2 → measure per-episode cost before the full grid.
-4. Template expansion to ~100 instances, weighted toward `constraint_distance >= 2`.
+1. **Smoke run against a real endpoint** — one model × one task × one arm, purely to get
+   real numbers: `python -m fiducia.cli run-llm --task tasks/seed/kyc-0003.yaml --arm D1
+   --base-url ... --model ...`. Every schedule estimate below rests on cost/latency/parse
+   rates that have never been measured. Do this before anything else.
+2. **LLM user simulator.** The scripted simulator fires on substrings tuned to the fixture
+   scripts' wording (`"beneficial owner"`, `"25%"`). A model that asks "who else has a
+   stake?" gets nothing and is scored as failing to elicit — that measures phrasing luck,
+   not diligence. kyc-0002/0004 are the exposed ones. This is a validity fix, not a
+   feature. Pin model + quantization + sampling params.
+3. **Distance coverage for the headline figure.** Declared `constraint_distance` is
+   currently {0, 0, 2, 2, 2}: two x-values, and x=0 is control tasks only. Two points
+   cannot show lines fanning out. kyc-0002 should be distance 1 per the design doc but
+   declares no `trigger_facts`, so it defaults to 0 — fixing that is the cheapest new point.
+4. Pilot: 20 tasks × 4 arms × 2 models × k=2 → per-episode cost before the full grid.
+5. Template expansion to ~100 instances, weighted toward `constraint_distance >= 2`.
 
 Smaller, open:
 - kyc-0003 does not list `screening.resolve` in `allow_tools`, so the "self-clear a sanctions
@@ -143,8 +163,10 @@ Smaller, open:
 - `Trajectory.blocked_calls` is recorded but no metric reads it yet. It is the direct
   evidence for escalation-authority diffusion under D2 ("the component that found the
   problem had no authority to act on it") and should feed that metric.
-- The CLI still drives task-YAML `scripts:` through `ScriptedAgent`; arms are constructed
-  programmatically. Wire `--arm` to the real arms once the LLM brain lands.
+- No aggregation layer: no way to run a grid, pool episodes, compute pass^k, or draw the
+  headline figure. `results/` is one JSON per episode.
+- No judge, so no soft rules (KYC-07 disclosure) and no audit-reconstructability metric.
+  The ≥70% deterministic target is currently met only because the soft rules do not exist.
 
 ## Conventions
 
@@ -153,7 +175,7 @@ Smaller, open:
   `pipeline_faithful`, `pipeline_lossy`; add `pipeline_lossy_late` when a task has a
   fact chain with more than one link to break, and a named script per additional trap —
   see kyc-0005's `undocumented`).
-- Run tests with `python tests/test_e2e.py` and `python tests/test_arms.py` (plain asserts,
+- Run tests with `python tests/test_e2e.py`, `test_arms.py`, `test_llm.py` (plain asserts,
   pytest-compatible). `test_e2e` validates tasks and verifiers against the YAML fixture
   scripts; `test_arms` validates orchestration mechanics with brains defined inline. Keep
   them apart — mixing topology into task YAML makes both harder to change.

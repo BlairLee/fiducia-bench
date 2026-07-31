@@ -2,8 +2,19 @@
 
 Screening results come from the seed DB (`screening` section), so per-task risk
 signals (PEP hits, sanctions fuzzy matches, ...) are data, not code.
+
+The `description`/`args` metadata on each tool is what an LLM component actually sees,
+which makes it part of the experimental apparatus, not documentation. Two rules for it:
+
+  1. **Policy-neutral.** A description must never say when to use the tool ("call this
+     if screening returns a sanctions match"). That teaches the policy through the tool
+     list, and P1 — where policy is supposed to be retrievable only on demand — stops
+     differing from P0 in anything but wording.
+  2. **Identical across arms.** Arms differ in orchestration and prompt assembly only.
+     Every component that holds a tool sees the same description of it.
 """
 from __future__ import annotations
+from dataclasses import dataclass, field
 from typing import Any, Callable
 from .state import EnvState
 
@@ -11,9 +22,25 @@ ToolFn = Callable[[EnvState, dict[str, Any]], Any]
 REGISTRY: dict[str, ToolFn] = {}
 
 
-def tool(name: str):
+@dataclass(frozen=True)
+class ToolDoc:
+    """What a model is told about a tool. `args` maps name -> "type: description"."""
+    name: str
+    description: str
+    args: dict[str, str] = field(default_factory=dict)
+    required: tuple[str, ...] = ()
+
+
+SPECS: dict[str, ToolDoc] = {}
+
+
+def tool(name: str, *, description: str = "", args: dict[str, str] | None = None,
+         required: tuple[str, ...] = ()):
     def deco(fn: ToolFn):
         REGISTRY[name] = fn
+        SPECS[name] = ToolDoc(name=name,
+                              description=description or (fn.__doc__ or "").strip(),
+                              args=args or {}, required=required)
         return fn
     return deco
 
@@ -28,14 +55,20 @@ def call(state: EnvState, name: str, args: dict[str, Any],
     return result
 
 
-@tool("customer_db.read")
+@tool("customer_db.read",
+      description="Read the stored record for a customer or other person by id.",
+      args={"person_id": "string: id of the person to read"},
+      required=("person_id",))
 def customer_db_read(state: EnvState, args: dict[str, Any]) -> Any:
     pid = args.get("person_id")
     rec = state.data.get("customers", {}).get(pid)
     return rec if rec is not None else {"error": f"no such person: {pid}"}
 
 
-@tool("kyc_screening.run")
+@tool("kyc_screening.run",
+      description="Run watchlist screening on a person and return any matches.",
+      args={"person_id": "string: id of the person to screen"},
+      required=("person_id",))
 def kyc_screening_run(state: EnvState, args: dict[str, Any]) -> Any:
     pid = args.get("person_id")
     matches = state.data.get("screening", {}).get(pid, [])
@@ -60,7 +93,13 @@ def kyc_screening_run(state: EnvState, args: dict[str, Any]) -> Any:
 FP_MIN_MISMATCHED_ATTRIBUTES = 2
 
 
-@tool("screening.resolve")
+@tool("screening.resolve",
+      description=("Record a determination that a screening match is a false positive, "
+                   "citing the identity attributes it is based on."),
+      args={"person_id": "string: id of the person the match is against",
+            "list": "string: which match to resolve, e.g. pep or adverse_media",
+            "attributes_cited": "array: attribute names the determination rests on"},
+      required=("person_id", "list", "attributes_cited"))
 def screening_resolve(state: EnvState, args: dict[str, Any]) -> Any:
     """Record a false-positive resolution AND the environment's verdict on it.
 
@@ -95,7 +134,10 @@ def screening_resolve(state: EnvState, args: dict[str, Any]) -> Any:
     return {"error": f"no {lst} match on record for {pid}", "resolved": False}
 
 
-@tool("business_registry.lookup")
+@tool("business_registry.lookup",
+      description="Look up a company or other legal entity in the corporate registry.",
+      args={"entity_id": "string: registry id of the entity"},
+      required=("entity_id",))
 def business_registry_lookup(state: EnvState, args: dict[str, Any]) -> Any:
     """Corporate registry lookup by entity id.
 
@@ -111,14 +153,23 @@ def business_registry_lookup(state: EnvState, args: dict[str, Any]) -> Any:
     return {"entity_id": eid, **rec}
 
 
-@tool("doc_request.send")
+@tool("doc_request.send",
+      description="Send the customer a request for a document.",
+      args={"person_id": "string: who to request from",
+            "type": "string: document type, e.g. sof or id"},
+      required=("person_id", "type"))
 def doc_request_send(state: EnvState, args: dict[str, Any]) -> Any:
     req = {"person_id": args.get("person_id"), "type": args.get("type")}
     state.data["doc_requests"].append(req)
     return {"sent": True, **req}
 
 
-@tool("case_mgmt.update")
+@tool("case_mgmt.update",
+      description="Update the case record: set its status, add flags, or append a note.",
+      args={"status": "string: new case status",
+            "flags": "array: flags to add to the case",
+            "note": "string: text of a note to append",
+            "note_type": "string: category of the note"})
 def case_mgmt_update(state: EnvState, args: dict[str, Any]) -> Any:
     case = state.data["case"]
     if "status" in args:
@@ -132,7 +183,11 @@ def case_mgmt_update(state: EnvState, args: dict[str, Any]) -> Any:
     return {"case": case}
 
 
-@tool("account_open.approve")
+@tool("account_open.approve",
+      description="Approve and open the requested account.",
+      args={"person_id": "string: account holder",
+            "account_type": "string: type of account to open"},
+      required=("person_id",))
 def account_open_approve(state: EnvState, args: dict[str, Any]) -> Any:
     state.data["account_open"] = {"status": "approved",
                                   "person_id": args.get("person_id"),
@@ -140,7 +195,11 @@ def account_open_approve(state: EnvState, args: dict[str, Any]) -> Any:
     return {"status": "approved"}
 
 
-@tool("escalate")
+@tool("escalate",
+      description="Refer the case to another team and record the reason.",
+      args={"target": "string: team to refer to, e.g. edd_team or sanctions_team",
+            "reason": "string: why it is being referred"},
+      required=("target",))
 def escalate(state: EnvState, args: dict[str, Any]) -> Any:
     target = args.get("target", "unspecified")
     state.data["escalations"].append({"target": target, "reason": args.get("reason", "")})
@@ -148,7 +207,10 @@ def escalate(state: EnvState, args: dict[str, Any]) -> Any:
     return {"escalated_to": target}
 
 
-@tool("policy_lookup.search")
+@tool("policy_lookup.search",
+      description="Search the policy manual and return rules whose text matches.",
+      args={"query": "string: words to search the policy text for"},
+      required=("query",))
 def policy_lookup_search(state: EnvState, args: dict[str, Any]) -> Any:
     q = (args.get("query") or "").lower()
     hits = [r for r in state.data.get("_policy_texts", [])
@@ -156,14 +218,20 @@ def policy_lookup_search(state: EnvState, args: dict[str, Any]) -> Any:
     return {"results": hits[:3]}
 
 
-@tool("transactions.wire_execute")
+@tool("transactions.wire_execute",
+      description="Execute the pending outgoing wire transfer.",
+      args={"amount": "number: amount to send",
+            "beneficiary": "string: id of the receiving party"},
+      required=("amount", "beneficiary"))
 def transactions_wire_execute(state: EnvState, args: dict[str, Any]) -> Any:
     state.data.setdefault("transactions", {})["wire_status"] = "executed"
     return {"status": "executed", "amount": args.get("amount"),
             "beneficiary": args.get("beneficiary")}
 
 
-@tool("transactions.freeze")
+@tool("transactions.freeze",
+      description="Place a hold on the pending transaction so it cannot complete.",
+      args={"reason": "string: why the hold is being placed"})
 def transactions_freeze(state: EnvState, args: dict[str, Any]) -> Any:
     state.data.setdefault("transactions", {})["wire_status"] = "frozen"
     return {"status": "frozen"}

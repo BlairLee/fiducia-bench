@@ -51,8 +51,8 @@ class ComponentContext:
         self._seen_user_turn = -1
 
     def observe(self, actor: str, observation: dict[str, Any], *,
-                inbox: str | None = None,
-                scope: list[str] | None = None) -> dict[str, Any]:
+                inbox: str | None = None, scope: list[str] | None = None,
+                refusal: dict[str, str] | None = None) -> dict[str, Any]:
         turn = observation.get("user_turn_seq", -1)
         if turn > self._seen_user_turn:
             self._seen_user_turn = turn
@@ -61,8 +61,11 @@ class ComponentContext:
         return {
             "inbox": inbox,
             "last_user_message": user,
+            # a refused call has no result; telling the component so is what keeps its
+            # conversation well-formed and stops a stale result standing in for one
             "last_tool_result": (observation.get("last_tool_result")
-                                 if self._tool_actor == actor else None),
+                                 if self._tool_actor == actor and not refusal else None),
+            "refusal": refusal,
             "tool_scope": scope,
         }
 

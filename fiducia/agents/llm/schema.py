@@ -18,6 +18,22 @@ FINISH = f"{CONTROL_PREFIX}finish"
 HANDOFF = f"{CONTROL_PREFIX}handoff"
 DELEGATE = f"{CONTROL_PREFIX}delegate"
 
+# Environment tools are named `customer_db.read`; the OpenAI function-name grammar is
+# ^[a-zA-Z0-9_-]{1,64}$ and excludes the dot. Models are trained on names that obey it,
+# so a dotted name is one the model has to reproduce out of distribution — and when it
+# fumbles, the harness records a parse failure that is really an artefact of ours. Wire
+# names are mapped, the environment keeps its own naming, and nothing else has to know.
+WIRE_SEP = "__"
+
+
+def to_wire(name: str) -> str:
+    return name.replace(".", WIRE_SEP)
+
+
+def from_wire(name: str) -> str:
+    """Inverse of `to_wire`. Control tools contain no `__` and pass through unchanged."""
+    return name.replace(WIRE_SEP, ".")
+
 _JSON_TYPES = {"string": "string", "number": "number", "integer": "integer",
                "boolean": "boolean", "array": "array", "object": "object"}
 
@@ -37,7 +53,7 @@ def function_schema(doc: ToolDoc) -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
-            "name": doc.name,
+            "name": to_wire(doc.name),
             "description": doc.description,
             "parameters": {
                 "type": "object",

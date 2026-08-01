@@ -9,7 +9,7 @@
 from __future__ import annotations
 import argparse, json, os
 from pathlib import Path
-from .runner import load_task, load_pack, run_episode, save_trajectory
+from .runner import load_task, load_pack, run_episode, save_trajectory, slug
 from .agents.base import ScriptedAgent
 from .verify.checks import verify
 from .verify.decomposition import decomposition_report
@@ -18,10 +18,11 @@ from .verify.decomposition import decomposition_report
 def _score(task, pack, traj, root, out_dir, label):
     save_trajectory(traj, out_dir)
     verdict = verify(task, pack, traj, str(root / task.seed_db))
-    report = {**verdict, "decomposition": decomposition_report(task, traj, verdict)}
+    report = {**verdict, "truncated": traj.truncated,
+              "decomposition": decomposition_report(task, traj, verdict)}
     if traj.llm_calls:
         report["cost"] = cost_summary(traj)
-    (out_dir / f"{label}.verdict.json").write_text(json.dumps(report, indent=2))
+    (out_dir / f"{slug(label)}.verdict.json").write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2))
     return report
 
@@ -68,6 +69,14 @@ def main():
     m.add_argument("--temperature", type=float, default=0.0)
     m.add_argument("--seed", type=int, default=0)
     m.add_argument("--max-tokens", type=int, default=1024)
+    # Endpoint-specific body fields, e.g. turning off a reasoning model's thinking mode:
+    #   --extra-json '{"chat_template_kwargs": {"enable_thinking": false}}'
+    # Anything passed here lands in the model fingerprint, because anything that changes
+    # the distribution episodes were drawn from has to be recorded with them.
+    m.add_argument("--extra-json", default="{}")
+    m.add_argument("--max-steps", type=int, default=40,
+                   help="hard cap on agent actions; an episode that never finishes "
+                        "otherwise costs a full budget of model calls")
     m.add_argument("--run-id", default="r1")
     m.add_argument("--out", default="results")
 
@@ -91,9 +100,11 @@ def main():
     from .agents.llm import LLMClient, build_arm
     client = LLMClient(args.base_url, args.model, api_key=args.api_key,
                        temperature=args.temperature, seed=args.seed,
-                       max_tokens=args.max_tokens)
+                       max_tokens=args.max_tokens,
+                       extra=json.loads(args.extra_json))
     arm = build_arm(task, pack, args.arm, client, policy_mode=args.policy)
-    traj = run_episode(task, arm, root, run_id=args.run_id)
+    traj = run_episode(task, arm, root, run_id=args.run_id,
+                       max_steps=args.max_steps)
     _score(task, pack, traj, root, out_dir,
            f"{task.task_id}__{args.arm}x{args.policy}__{args.model}__{args.run_id}")
 

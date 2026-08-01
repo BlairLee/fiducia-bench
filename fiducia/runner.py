@@ -26,6 +26,7 @@ from .schema import (Task, PolicyPack, Trajectory, Turn, ToolEvent, Handoff, Rev
 from .env.state import EnvState
 from .env import tools as toolmod
 from .simulator.scripted import ScriptedSimulator
+from .simulator.llm import LLMSimulator
 
 MAX_STEPS = 120
 
@@ -41,7 +42,8 @@ def load_pack(path: str | Path) -> PolicyPack:
 
 
 def run_episode(task: Task, agent, repo_root: str | Path, run_id: str = "r1",
-                arm: str = "D0", max_steps: int = MAX_STEPS) -> Trajectory:
+                arm: str = "D0", max_steps: int = MAX_STEPS,
+                simulator=None) -> Trajectory:
     root = Path(repo_root)
     state = EnvState(root / task.seed_db)
     # Factor P demands one corpus, two access modes: P0 pastes the policy pack into
@@ -54,7 +56,7 @@ def run_episode(task: Task, agent, repo_root: str | Path, run_id: str = "r1",
             {"rule_id": r.rule_id, "text": r.text.strip()}
             for r in load_pack(pack_path).rules
         ]
-    sim = ScriptedSimulator(task.simulator)
+    sim = simulator if simulator is not None else ScriptedSimulator(task.simulator)
     # An arm knows its own topology; trust that over the caller's label so a trajectory
     # can never be filed under an architecture it did not actually run.
     traj = Trajectory(task_id=task.task_id, run_id=run_id,

@@ -291,6 +291,89 @@ def test_the_model_never_gets_upstream_context_it_should_not_have():
     assert "Kovalenko" not in blob                  # the upstream conversation, no
 
 
+# ---------- LLM simulator ----------
+
+from fiducia.simulator.llm import LLMSimulator
+
+
+def _judge(match: bool):
+    return _say(json.dumps({"match": match}))
+
+
+def test_llm_simulator_matches_semantically():
+    """The whole point: "who else has a stake?" should match ownership triggers."""
+    task = load_task(ROOT / "tasks/seed/kyc-0004.yaml")
+    transport = ReplayTransport([_judge(True)])
+    client = LLMClient("http://x/v1", "judge", transport=transport)
+    sim = LLMSimulator(task.simulator, client)
+    reply = sim.respond("Could you tell me who else has a stake in the company?")
+    assert "55%" in reply, reply                         # the canned reply, not improvised
+    assert "ownership_structure" in sim.revealed, sim.revealed
+    assert sim.last_reveals == ["ownership_structure"]
+
+
+def test_llm_simulator_rejects_unrelated_questions():
+    task = load_task(ROOT / "tasks/seed/kyc-0004.yaml")
+    # The judge says no to the first rule, no to the second, no to the third
+    transport = ReplayTransport([_judge(False)] * len(task.simulator.rules))
+    client = LLMClient("http://x/v1", "judge", transport=transport,
+                        max_tokens=64)
+    sim = LLMSimulator(task.simulator, client)
+    # default_reply is used for small talk when no rule matches; here the judge
+    # also gets called for the default — so supply one more response
+    transport.responses.append(_say("Sure, sounds good."))
+    reply = sim.respond("Can you confirm your date of birth for me?")
+    assert sim.last_reveals == [], sim.last_reveals
+    assert "55%" not in reply, reply
+
+
+def test_llm_simulator_uses_canned_reply_not_model_improvisation():
+    """Reveals are discrete events, not vibes. The reply must be the YAML text."""
+    task = load_task(ROOT / "tasks/seed/kyc-0004.yaml")
+    transport = ReplayTransport([_judge(True)])
+    client = LLMClient("http://x/v1", "judge", transport=transport)
+    sim = LLMSimulator(task.simulator, client)
+    reply = sim.respond("Who are the beneficial owners?")
+    assert reply == task.simulator.rules[0].reply, reply
+
+
+def test_llm_simulator_falls_back_on_budget_exhaustion():
+    task = load_task(ROOT / "tasks/seed/kyc-0003.yaml")
+    client = LLMClient("http://x/v1", "judge", transport=ReplayTransport([]))
+    sim = LLMSimulator(task.simulator, client, max_judge_calls=0)
+    # With budget exhausted, falls back to substring matching
+    reply = sim.respond("Who is the beneficiary?")
+    assert "Kovalenko" in reply, reply
+    # And a non-matching message still gets the default
+    reply2 = sim.respond("Tell me about your day")
+    assert reply2 == task.simulator.default_reply, reply2
+
+
+def test_llm_simulator_integrates_with_runner():
+    """Full episode: LLM sim + scripted agent, reveals tracked by the environment."""
+    task = load_task(ROOT / "tasks/seed/kyc-0004.yaml")
+    pack = load_pack(ROOT / task.policy_pack)
+    # Oracle script has 3 messages, 3 sim rules (all once=True). Each message is
+    # judged against unused rules in order until one matches.
+    #   msg1: rule0 checked -> True (ownership). rule0 now used.
+    #   msg2: rule0 skipped (used). rule1 checked -> True (corvex). rule1 now used.
+    #   msg3: rule0,1 skipped. rule2 checked -> False. default reply call.
+    responses = [
+        _judge(True),                              # msg1 vs rule0 -> match
+        _judge(True),                              # msg2 vs rule1 -> match
+        _judge(False),                             # msg3 vs rule2 -> no match
+        _say("I understand, thank you."),           # msg3 default reply
+    ]
+    transport = ReplayTransport(responses)
+    client = LLMClient("http://x/v1", "judge", transport=transport)
+    sim = LLMSimulator(task.simulator, client)
+    from fiducia.agents.base import ScriptedAgent
+    agent = ScriptedAgent("oracle", task.scripts["oracle"])
+    traj = run_episode(task, agent, ROOT, simulator=sim)
+    assert any(r.info_id == "ownership_structure" for r in traj.reveals), traj.reveals
+    assert any(r.info_id == "corvex_details" for r in traj.reveals), traj.reveals
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

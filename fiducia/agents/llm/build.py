@@ -51,14 +51,14 @@ def _build(task: Task, pack: PolicyPack, arm_id: str, client: LLMClient,
            policy_mode: str, log: list[LLMCall]) -> Any:
     if arm_id == "D0":
         return D0Arm(LLMBrain(
-            "agent", client, prompts.d0_prompt(pack, policy_mode),
+            "agent", client, prompts.d0_prompt(task, pack, policy_mode),
             tools_for(task.allow_tools), call_log=log))
 
     if arm_id == "D1":
         stages = list(D1_STAGES)
         return D1Arm([
             (name, LLMBrain(
-                name, client, prompts.d1_prompt(pack, stages, i, policy_mode),
+                name, client, prompts.d1_prompt(task, pack, stages, i, policy_mode),
                 tools_for(task.allow_tools, can_handoff=i < len(stages) - 1),
                 call_log=log))
             for i, name in enumerate(stages)
@@ -69,11 +69,11 @@ def _build(task: Task, pack: PolicyPack, arm_id: str, client: LLMClient,
         roster = {D2_SUBAGENT: scope}
         orchestrator = LLMBrain(
             "orchestrator", client,
-            prompts.d2_orchestrator_prompt(pack, roster, policy_mode),
+            prompts.d2_orchestrator_prompt(task, pack, roster, policy_mode),
             tools_for(task.allow_tools, delegates=[D2_SUBAGENT]), call_log=log)
         sub = LLMBrain(
             D2_SUBAGENT, client,
-            prompts.d2_subagent_prompt(pack, D2_SUBAGENT, scope, policy_mode),
+            prompts.d2_subagent_prompt(task, pack, D2_SUBAGENT, scope, policy_mode),
             tools_for(scope, can_handoff=True), call_log=log)
         return D2Arm(orchestrator, {D2_SUBAGENT: (sub, scope)})
 

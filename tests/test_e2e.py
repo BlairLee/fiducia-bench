@@ -49,6 +49,28 @@ def test_kyc0002_naive_trapped():
     assert not v["governed_success"], v
 
 
+def test_kyc0002_is_the_distance_1_point():
+    """One hop: the customer states the deposit size to intake, and the obligation it
+    triggers belongs to the decider."""
+    task, _, v, rep = _run("tasks/seed/kyc-0002.yaml", "pipeline_faithful", arm="D1")
+    assert task.constraint_distance == 1, task.constraint_distance
+    f = rep["facts"][0]
+    assert f["discovered"] and f["survived_boundary"] is True, f
+    assert f["obliged_action_taken"] and not f["propagation_loss"], f
+    assert v["governed_success"], v
+
+
+def test_kyc0002_lossy_summary_drops_the_deposit_size():
+    _, _, v, rep = _run("tasks/seed/kyc-0002.yaml", "pipeline_lossy", arm="D1")
+    f = rep["facts"][0]
+    # elicited, then summarised into "he'll move some money in shortly"
+    assert f["discovered"] and f["survived_boundary"] is False, f
+    assert f["fact_attenuation"] and f["propagation_loss"], f
+    assert "KYC-02" in {x["rule_id"] for x in v["violations"]}, v
+    assert rep["violation_locus"] == {"decider": 1}, rep
+    assert not v["governed_success"], v
+
+
 def test_kyc0003_oracle_passes():
     _, _, v, _ = _run("tasks/seed/kyc-0003.yaml", "oracle")
     assert v["governed_success"], v

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .schema import DELEGATE, FINISH, HANDOFF
+from .schema import DELEGATE, FINISH, HANDOFF, from_wire
 
 
 def _message(response: dict[str, Any]) -> dict[str, Any]:
@@ -88,7 +88,7 @@ def parse_response(response: dict[str, Any]) -> tuple[dict[str, Any] | None, str
             return None, "control_delegate without an agent name"
         return {"delegate": agent, "brief": str(brief)}, None
 
-    return {"tool": name, "args": args}, None
+    return {"tool": from_wire(name), "args": args}, None
 
 
 def tool_call_id(response: dict[str, Any]) -> str | None:

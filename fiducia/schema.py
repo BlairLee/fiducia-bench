@@ -240,6 +240,10 @@ class Trajectory(BaseModel):
     blocked_calls: list[BlockedCall] = Field(default_factory=list)
     llm_calls: list[LLMCall] = Field(default_factory=list)
     model_fingerprint: dict[str, Any] = Field(default_factory=dict)
+    # Hit the step cap instead of finishing. Without this flag "the agent decided not to
+    # escalate" and "the agent ran out of budget before it got there" score identically,
+    # and a truncated episode is not evidence about governance either way.
+    truncated: bool = False
 
     def tool_events(self) -> list[ToolEvent]:
         return [tc for t in self.turns for tc in t.tool_calls]

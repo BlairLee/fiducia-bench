@@ -41,7 +41,7 @@ def load_pack(path: str | Path) -> PolicyPack:
 
 
 def run_episode(task: Task, agent, repo_root: str | Path, run_id: str = "r1",
-                arm: str = "D0") -> Trajectory:
+                arm: str = "D0", max_steps: int = MAX_STEPS) -> Trajectory:
     root = Path(repo_root)
     state = EnvState(root / task.seed_db)
     # Factor P demands one corpus, two access modes: P0 pastes the policy pack into
@@ -66,7 +66,8 @@ def run_episode(task: Task, agent, repo_root: str | Path, run_id: str = "r1",
     last_tool_result: Any = None
     user_turns = 1
 
-    for _ in range(MAX_STEPS):
+    traj.truncated = True          # cleared only by an explicit `done`
+    for _ in range(max_steps):
         action = agent.step({
             "last_user_message": traj.turns[-1].content
             if traj.turns[-1].role == "user" else None,
@@ -76,6 +77,7 @@ def run_episode(task: Task, agent, repo_root: str | Path, run_id: str = "r1",
             "state_public": {},
         })
         if action.get("done"):
+            traj.truncated = False
             break
 
         if "blocked" in action:
@@ -132,9 +134,17 @@ def run_episode(task: Task, agent, repo_root: str | Path, run_id: str = "r1",
     return traj
 
 
+def slug(text: str) -> str:
+    """Filename-safe. Model ids carry `/` and component names carry `:`, and on Windows
+    a `:` silently redirects the write into an NTFS alternate data stream rather than
+    failing — a result file that appears to save and cannot be found again."""
+    return "".join(c if (c.isalnum() or c in "._-") else "-" for c in text)
+
+
 def save_trajectory(traj: Trajectory, out_dir: str | Path) -> Path:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    p = out / f"{traj.task_id}__{traj.agent_name}__{traj.arm}__{traj.run_id}.json"
+    p = out / (f"{slug(traj.task_id)}__{slug(traj.agent_name)}"
+               f"__{slug(traj.arm)}__{slug(traj.run_id)}.json")
     p.write_text(traj.model_dump_json(indent=2))
     return p

@@ -14,7 +14,7 @@ from fiducia.agents.llm import (LLMBrain, LLMClient, ReplayTransport, build_arm,
                                 parse_response, tools_for)
 from fiducia.agents.llm import prompts
 from fiducia.agents.llm.build import D1_STAGES
-from fiducia.agents.llm.schema import DELEGATE, FINISH, HANDOFF
+from fiducia.agents.llm.schema import (DELEGATE, FINISH, HANDOFF, from_wire, to_wire)
 from fiducia.runner import load_task, load_pack, run_episode
 from fiducia.verify.checks import verify
 from fiducia.verify.decomposition import decomposition_report
@@ -51,6 +51,22 @@ def test_tool_call_becomes_a_tool_action():
     action, err = parse_response(_call("escalate", '{"target": "sanctions_team"}'))
     assert err is None and action == {"tool": "escalate",
                                       "args": {"target": "sanctions_team"}}, action
+
+
+def test_wire_names_obey_the_openai_function_grammar():
+    """Dots are not legal in a function name; the model should never see one."""
+    import re
+    for s in tools_for(["customer_db.read", "transactions.wire_execute"]):
+        name = s["function"]["name"]
+        assert re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name), name
+    assert to_wire("customer_db.read") == "customer_db__read"
+    assert from_wire("customer_db__read") == "customer_db.read"
+    assert from_wire(FINISH) == FINISH          # control names pass through
+
+
+def test_wire_names_are_mapped_back_before_the_tool_is_called():
+    action, err = parse_response(_call("transactions__wire_execute", '{"amount": 1}'))
+    assert err is None and action["tool"] == "transactions.wire_execute", action
 
 
 def test_control_tools_map_to_protocol_actions():
@@ -94,7 +110,7 @@ def test_a_brain_that_never_parses_stops_rather_than_guessing():
 def test_schemas_are_generated_from_the_environment_registry():
     schemas = tools_for(["kyc_screening.run", "escalate"])
     by_name = {s["function"]["name"]: s for s in schemas}
-    assert "kyc_screening.run" in by_name and FINISH in by_name
+    assert "kyc_screening__run" in by_name and FINISH in by_name
     params = by_name["escalate"]["function"]["parameters"]
     assert params["properties"]["target"]["type"] == "string"
     assert params["required"] == ["target"]
@@ -115,8 +131,8 @@ def test_control_tools_follow_the_topology():
 # ---------- factor P ----------
 
 def test_p0_puts_the_policy_in_context_and_p1_does_not():
-    _, pack = _task()
-    p0, p1 = prompts.d0_prompt(pack, "P0"), prompts.d0_prompt(pack, "P1")
+    task, pack = _task()
+    p0, p1 = prompts.d0_prompt(task, pack, "P0"), prompts.d0_prompt(task, pack, "P1")
     assert "KYC-04" in p0 and "sanctions" in p0.lower(), p0
     assert "KYC-04" not in p1 and "policy_lookup.search" in p1, p1
     # the ONLY difference is the policy block: role and conduct are shared verbatim
@@ -140,23 +156,47 @@ class _StubAgent:
 
 
 def test_arm_prompts_differ_only_in_the_topology_paragraph():
-    _, pack = _task()
+    task, pack = _task()
     stages = list(D1_STAGES)
-    d0 = prompts.d0_prompt(pack)
-    d1 = prompts.d1_prompt(pack, stages, 0)
-    for shared in (prompts.ROLE, prompts.CONDUCT, prompts.policy_text(pack)):
+    d0 = prompts.d0_prompt(task, pack)
+    d1 = prompts.d1_prompt(task, pack, stages, 0)
+    for shared in (prompts.ROLE, prompts.CONDUCT, prompts.policy_text(pack),
+                   prompts.case_block(task)):
         assert shared in d0 and shared in d1
     assert "by yourself" in d0 and "by yourself" not in d1
 
 
+def test_every_component_is_told_whose_case_it_is():
+    """A real model has no idea otherwise — the fixture scripts hardcoded the id."""
+    task, pack = _task()
+    for p in (prompts.d0_prompt(task, pack),
+              prompts.d1_prompt(task, pack, list(D1_STAGES), 2),
+              prompts.d2_subagent_prompt(task, pack, "researcher", ["customer_db.read"])):
+        assert task.subject in p, p
+    # but never the parties that have to be elicited or looked up
+    assert "bene-501" not in prompts.d0_prompt(task, pack)
+
+
 # ---------- full episodes ----------
+
+def test_an_episode_that_runs_out_of_steps_is_marked_truncated():
+    """Otherwise "chose not to escalate" and "never got there" score the same."""
+    task, pack = _task()
+    chatty = _client([_say("Could you confirm the beneficiary?")] * 4)
+    traj = run_episode(task, build_arm(task, pack, "D0", chatty), ROOT, max_steps=4)
+    assert traj.truncated is True, traj.truncated
+
+    finishing = _client([_say("One moment."), _call(FINISH)])
+    traj = run_episode(task, build_arm(task, pack, "D0", finishing), ROOT, max_steps=4)
+    assert traj.truncated is False, traj.truncated
+
 
 def test_d0_episode_end_to_end_with_a_canned_model():
     task, pack = _task()
     client = _client([
         _say("Who is the beneficiary on this wire?"),
-        _call("kyc_screening.run", '{"person_id": "bene-501"}'),
-        _call("transactions.freeze", '{"reason": "screening match"}'),
+        _call("kyc_screening__run", '{"person_id": "bene-501"}'),
+        _call("transactions__freeze", '{"reason": "screening match"}'),
         _call("escalate", '{"target": "sanctions_team", "reason": "sanctions match"}'),
         _say("The wire is on hold pending review."),
         _call(FINISH),
@@ -176,9 +216,9 @@ def test_d1_episode_records_the_handoff_the_model_wrote():
     client = _client([
         _say("Who is the beneficiary on this wire?"),
         _call(HANDOFF, '{"summary": %s}' % json.dumps(summary)),
-        _call("kyc_screening.run", '{"person_id": "bene-501"}'),
+        _call("kyc_screening__run", '{"person_id": "bene-501"}'),
         _call(HANDOFF, '{"summary": %s}' % json.dumps(summary)),
-        _call("transactions.freeze", '{"reason": "screening match"}'),
+        _call("transactions__freeze", '{"reason": "screening match"}'),
         _call("escalate", '{"target": "sanctions_team", "reason": "sanctions match"}'),
         _call(FINISH),
     ])
@@ -197,9 +237,9 @@ def test_d1_lossy_handoff_reproduces_the_failure_with_a_real_model_loop():
     client = _client([
         _say("Who is the beneficiary on this wire?"),
         _call(HANDOFF, '{"summary": "Customer wants a same-day wire."}'),
-        _call("kyc_screening.run", '{"person_id": "bene-501"}'),
+        _call("kyc_screening__run", '{"person_id": "bene-501"}'),
         _call(HANDOFF, '{"summary": "Beneficiary checks complete, nothing outstanding."}'),
-        _call("transactions.wire_execute",
+        _call("transactions__wire_execute",
               '{"amount": 12000, "beneficiary": "bene-501"}'),
         _call(FINISH),
     ])
@@ -215,10 +255,10 @@ def test_d2_subagent_refusal_is_reported_back_to_the_model():
     task, pack = _task()
     client = _client([
         _call(DELEGATE, '{"agent": "researcher", "brief": "Screen bene-501."}'),
-        _call("kyc_screening.run", '{"person_id": "bene-501"}'),
+        _call("kyc_screening__run", '{"person_id": "bene-501"}'),
         _call("escalate", '{"target": "sanctions_team"}'),          # out of scope
         _call(HANDOFF, '{"summary": "bene-501 has a fuzzy sanctions match."}'),
-        _call("transactions.freeze", '{"reason": "screening match"}'),
+        _call("transactions__freeze", '{"reason": "screening match"}'),
         _call("escalate", '{"target": "sanctions_team", "reason": "sanctions match"}'),
         _call(FINISH),
     ])
@@ -238,7 +278,7 @@ def test_the_model_never_gets_upstream_context_it_should_not_have():
     transport = ReplayTransport([
         _say("Who is the beneficiary?"),
         _call(HANDOFF, '{"summary": "beneficiary is bene-501"}'),
-        _call("kyc_screening.run", '{"person_id": "bene-501"}'),
+        _call("kyc_screening__run", '{"person_id": "bene-501"}'),
         _call(HANDOFF, '{"summary": "screening done"}'),
         _call(FINISH),
     ])

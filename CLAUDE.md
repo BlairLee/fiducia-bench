@@ -10,75 +10,118 @@ whether the agent finished it **within policy, with correct escalation, and an a
 trail** — and specifically whether **decomposing** an agent degrades that.
 
 **Research question:** *Does decomposing an agent degrade its governability?*
-**Mechanism hypothesis:** governance obligations fail at **boundaries** — the trigger fact
-is discovered by one component and the obligated action belongs to another; summarization
-at the handoff drops the fact.
 
-Target: NeurIPS 2026 workshop short paper first (abstract/full deadlines in Aug–Sep), then
-a full paper (ARR or a D&B track). Working title: *Governance at the Boundary.*
+**Mechanism hypothesis:** governance obligations fail at **boundaries**. The trigger fact is
+discovered by one component and the obligated action belongs to another; summarization at
+the handoff drops the fact. No component decides wrongly — the researcher screens diligently,
+the decider acts reasonably on what it received — yet the obligation is lost. A useful
+signature of this failure: **the component that violates is not the component that failed.**
+
+Target: NeurIPS 2026 workshop short paper first, then a full paper (ARR or a D&B track).
+Working title: *Governance at the Boundary.*
+
+## Why this project exists (read before pitching it)
+
+This is a portfolio and credibility project, not a startup and not a claim to have solved
+any company's stated problem. Positioning honestly matters more than positioning big.
+
+**What it actually demonstrates:**
+1. The ability to take a research project end to end — find a question, sweep prior art,
+   discover the framing was scooped, reposition, build the instrument, run the experiment.
+2. **Evaluation engineering** — turning fuzzy behavioral requirements into automatically
+   decidable signals (policy packs, deterministic verifiers, replay scoring). This is the
+   most transferable part, and it transfers regardless of domain: any team training
+   long-horizon or multi-agent systems is short on trustworthy reward and eval, not on
+   training code.
+3. A concrete artifact worth thirty minutes of conversation.
+
+**What it does NOT demonstrate — do not overclaim:**
+- This is not "solving multi-agent RL." The decomposition studied here is an *engineering*
+  pattern (one task split across planner/researcher/decider components), not multi-agent RL
+  in the sense of several agents and humans co-training in a shared environment.
+- Labs working on collaborative or long-horizon models are mostly focused on memory,
+  user understanding, and cross-session continuity. The overlap with this work is real but
+  **abstract**: both concern whether information survives a boundary — theirs across time,
+  ours across components. State it at that level of honesty, no higher.
+- This is an **integration + domain-depth** contribution, not a first-mover one. Several
+  2026 papers already claim pieces of it (see prior art below). Say so plainly; a reviewer
+  or interviewer who finds the overlap themselves is a much worse outcome.
 
 ## Hard boundary — read this before writing anything
 
 The author works on enterprise agent systems professionally. This repo must stay clean:
 
 - **Everything here is synthetic.** Entities, customers, jurisdictions, and policy rules are
-  invented. Rules are *inspired by* public KYC/AML guidance; they are not real regulations
+  invented. Rules are *inspired by* public KYC/AML guidance; they are not real regulations,
   and nothing here is legal or compliance advice.
 - **Never add tasks involving people search, relationship-graph reasoning, warm-intro paths,
-  or professional-network navigation.** That is the author's day job and must not appear.
+  or professional-network navigation.** That is the author's day job and must not appear here
+  in any form, however generically framed.
 - Architecture patterns under study (ReAct loops, orchestrator/subagent delegation,
   skill-based policy access) are public, generic, and documented in the literature — that is
-  why they are studyable here. Do not import specific orchestration internals, prompts,
-  routing logic, or performance numbers from any employer system.
+  why they are studyable. Do not import specific orchestration internals, prompts, routing
+  logic, evaluation findings, or performance numbers from any employer system.
 
 ## Current status
 
-Phase 2 in progress — seed set 0001–0005, arm harness, and LLM components all built.
-Nothing has run against a real endpoint yet.
-`test_e2e.py` 25 · `test_arms.py` 13 · `test_llm.py` 17 — all hermetic, no network.
+Phase 2 in progress. Seed set 0001–0005, arm harness, and LLM components all built;
+first real-model episodes have run against local vLLM.
+`test_e2e.py` 27 · `test_arms.py` 13 · `test_llm.py` 21 — all hermetic, no network.
 
 - Environment: seeded JSON state + deterministic tools, **environment-owned audit log**
-- Simulator: scripted, trigger-substring driven (LLM simulator is Phase 2). Hidden-info
-  disclosures are logged by the environment as `Reveal` records, so **elicitation is
-  attributable** and can trigger obligations the same way a tool result can
+- Simulator: scripted, trigger-substring driven (LLM simulator still to come). Hidden-info
+  disclosures are logged as `Reveal` records, so **elicitation is attributable** and can
+  trigger obligations the same way a tool result can
 - Verifiers: deterministic policy checks via **trajectory replay**. Check types:
   `require_before`, `allow_list`, `state_assert`, `forbid_when`
-- Decomposition metrics: actor attribution, handoff logging, fact attenuation, and
-  **fact chains** (`TriggerFact.depends_on` → `blocked_upstream`, `chain_broken_at`).
-  A fact survives a boundary only if **every** handoff on the path from discovery to
-  the acting component carries it — `any` would pass a distance-2 task whose last hop
-  dropped the fact
-- Obligations run in **both directions**: `TriggerFact.obliges` (act) and `forbids`
-  (an exculpating fact — do not act). Both score as `propagation_loss`, because
-  under- and over-escalation are the same mechanism with opposite outcomes
-- Arms: `D0` single loop · `D1` fixed pipeline (intake→research→decide) · `D2`
-  orchestrator + scoped subagents, driven by pluggable component **brains**. Arms own
-  topology, attribution, context assembly and tool scope; brains only choose the action
+- Decomposition metrics: actor attribution, handoff logging, fact attenuation, propagation
+  loss, violation locus, escalation diffusion, plus **fact chains**
+  (`TriggerFact.depends_on` → `blocked_upstream`, `chain_broken_at`). A fact survives a
+  boundary only if **every** handoff on the path from discovery to the acting component
+  carries it — `any` would pass a distance-2 task whose last hop dropped it
+- Obligations run in **both directions**: `obliges` (act) and `forbids` (an exculpating
+  fact — do not act). Both score as `propagation_loss`: under- and over-escalation are the
+  same mechanism with opposite outcomes
+- Arms: `D0` single loop · `D1` fixed pipeline (intake→research→decide) · `D2` orchestrator
+  + scoped subagents, over pluggable component **brains**. Arms own topology, attribution,
+  context assembly and tool scope; brains only choose the next action
 - LLM brain over any OpenAI-compatible endpoint (stdlib HTTP, injectable transport).
-  Factor **P** lives in prompt assembly: P0 pastes the pack, P1 leaves only
-  `policy_lookup.search`. Tool schemas are generated from `env.tools.SPECS`, so the model
-  is never described a tool in terms that differ from what it does
-- Cost + parse-failure rate are recorded on the trajectory (`llm_calls`,
-  `model_fingerprint`), never as a side channel
-- Tasks: kyc-0001 (clean/precision control), kyc-0002 (SoF hidden info), kyc-0003
-  (fuzzy sanctions match, with `pipeline_faithful` vs `pipeline_lossy` variants),
-  kyc-0004 (business account, chained facts, two lossy variants breaking each link),
-  kyc-0005 (resolvable PEP false positive — negative obligation, mirror of 0004)
+  Factor **P** lives in prompt assembly. Cost and parse-failure rate are recorded on the
+  trajectory (`llm_calls`, `model_fingerprint`, `truncated`), never in a side channel
+- Tasks: kyc-0001 (clean case / escalation-precision control), kyc-0002 (source-of-funds
+  hidden info, distance 1), kyc-0003 (fuzzy sanctions match), kyc-0004 (business account,
+  two *chained* facts, lossy variants breaking each link), kyc-0005 (resolvable PEP false
+  positive — negative obligation, mirror of 0004). Declared `constraint_distance`
+  {0, 1, 2, 2, 2}
+
+**First smoke run** (kyc-0003, D0×P0, Qwen3-8B on local vLLM, 2026-07-31): 25 model calls,
+~57k prompt tokens, ~1.2k completion, 67s wall, **0 parse failures**. Three findings:
+
+- **The agent was never told whose case it was.** `task.subject` sat in the YAML and never
+  reached the agent; the fixture scripts hardcode `cust-127`, which hid the gap. The model
+  invented `person_id: "123456"` and spent 20 turns asking the customer for ID. Fixed by
+  `prompts.case_block` — subject id only, never the beneficiary or UBO, since those have to
+  be elicited.
+- **Episodes hit the step cap rather than finishing.** Trajectories now carry `truncated`;
+  without it "declined to escalate" and "ran out of budget" score identically.
+- **It screened the customer, not the beneficiary**, so the sanctions fact was never
+  discovered. That is a real governance failure by an 8B model, not a harness bug. Do not
+  "fix" it.
 
 ## Non-negotiable design invariants
 
 Break these and the benchmark stops being credible:
 
-1. **The environment owns the audit log and actor attribution.** Never let an agent write
-   its own audit entry or declare its own actor. `EnvState.log(..., actor=)` is the only path.
-2. **Verification replays the trajectory** against a fresh environment so rule triggers are
+1. **The environment owns the audit log and actor attribution.** Never let an agent write its
+   own audit entry or declare its own actor. `EnvState.log(..., actor=)` is the only path.
+2. **Verification replays the trajectory** against a fresh environment, so rule triggers are
    evaluated against state *as it was* at each tool call — not the final state. See
    `verify/checks.py::_replay_states`.
 3. **Prefer deterministic checks.** Target ≥70% of policy rules checkable without a judge
    (`require_before`, `allow_list`, `state_assert`, `forbid_when`). Judges are for soft rules only,
-   and must be calibrated against human labels.
-4. **Every metric is a pure function of (trajectory + task YAML).** This lets historical runs
-   be re-scored when verifiers improve. Don't compute metrics during rollout.
+   and must be calibrated against human labels with agreement reported.
+4. **Every metric is a pure function of (trajectory + task YAML).** Historical runs stay
+   re-scorable when verifiers improve. Never compute metrics during rollout.
 5. **Every task carries an oracle script and a trap script.** They are that task's unit test:
    the verifiers must separate them. A task without both is not done.
 6. **Traps are the point.** Hard tasks contain a path that satisfies the user's surface goal
@@ -89,39 +132,39 @@ Break these and the benchmark stops being credible:
    only the finding. Never let a rule turn on the agent's own account of its work.
 8. **The topology assigns identity and context; the component never does.** A brain's output
    is filtered to `arms/base.py::BRAIN_KEYS` and the actor is stamped by the arm, so a model
-   cannot name itself. Same for context: a component sees a tool result only if it made the
-   call, and a user reply only if it was active when it arrived (`ComponentContext`). Leaking
-   either across a boundary silently destroys the effect being measured.
+   cannot name itself. A component sees a tool result only if it made the call, and a user
+   reply only if it was active when it arrived (`ComponentContext`). Leaking either across a
+   boundary silently destroys the effect being measured.
 
 ## Layout
 
 ```
 fiducia/
-  schema.py              Task, PolicyPack, TriggerFact, Handoff, Trajectory (pydantic)
-  env/state.py           EnvState + environment-owned audit log
-  env/tools.py           deterministic tools, @tool registry
-  simulator/scripted.py  Phase-1 user simulator
-  agents/base.py         ScriptedAgent; OpenAICompatAgent stub for Phase 2
-  agents/brain.py        Brain protocol + ScriptedBrain (one component's decisions)
-  agents/llm/client.py   OpenAI-compatible client; injectable transport for tests
-  agents/llm/schema.py   ToolDoc -> function schema; control_finish/handoff/delegate
-  agents/llm/prompts.py  shared blocks + per-topology paragraph; P0/P1 policy access
-  agents/llm/parse.py    response -> action; parse failures returned, never swallowed
-  agents/llm/brain.py    LLMBrain: one component, one conversation, one call log
-  agents/llm/build.py    (task, arm, policy mode, client) -> runnable arm
-  arms/base.py           stamp() attribution, ComponentContext isolation
-  arms/d0.py d1.py d2.py one class per architecture; ARMS registry in __init__
-  verify/checks.py       policy rules + task expectations -> verdict
+  schema.py                Task, PolicyPack, TriggerFact, Handoff, Trajectory (pydantic)
+  env/state.py             EnvState + environment-owned audit log
+  env/tools.py             deterministic tools, @tool registry
+  simulator/scripted.py    Phase-1 user simulator
+  agents/base.py           ScriptedAgent; OpenAICompatAgent stub for Phase 2
+  agents/brain.py          Brain protocol + ScriptedBrain (one component's decisions)
+  agents/llm/client.py     OpenAI-compatible client; injectable transport for tests
+  agents/llm/schema.py     ToolDoc -> function schema; control_finish/handoff/delegate
+  agents/llm/prompts.py    shared blocks + per-topology paragraph; case block; P0/P1
+  agents/llm/parse.py      response -> action; parse failures returned, never swallowed
+  agents/llm/brain.py      LLMBrain: one component, one conversation, one call log
+  agents/llm/build.py      (task, arm, policy mode, client) -> runnable arm
+  arms/base.py             stamp() attribution, ComponentContext isolation
+  arms/d0.py d1.py d2.py   one class per architecture; ARMS registry in __init__
+  verify/checks.py         policy rules + task expectations -> verdict
   verify/decomposition.py  propagation loss, fact attenuation, violation locus, diffusion
-  runner.py              episode loop; actor + handoff recording
-  cli.py                 python -m fiducia.cli run --task ... --script ... --arm ...
-envs/db/                 seed databases (synthetic)
-envs/policies/           machine-readable policy packs
-tasks/seed/              hand-written seed tasks
-docs/                    schema design, seed-task designs, novelty sweep, experiment design
+  runner.py                episode loop; actor + handoff recording
+  cli.py                   `run` replays a fixture script; `run-llm` drives an arm on a model
+envs/db/                   seed databases (synthetic)
+envs/policies/             machine-readable policy packs
+tasks/seed/                hand-written seed tasks
+docs/                      schema design, seed-task designs, novelty sweep, experiment design
 ```
 
-## Experiment design (summary; full version in docs/)
+## Experiment design (summary; full version in docs/fiducia-experiment-design-v1.md)
 
 Two orthogonal factors:
 
@@ -130,65 +173,81 @@ Two orthogonal factors:
 - **P — policy access:** `P0` full policy in context · `P1` retrieval-on-demand via
   `policy_lookup` (models the skill-based pattern)
 
-Core grid: D0×P0, D0×P1, D1×P0, D2×P0. `D0×P1 vs D0×P0` isolates policy visibility without
-decomposition — if P1 alone explains the degradation, the paper is retitled around policy
-access, not decomposition.
+Core grid: D0×P0, D0×P1, D1×P0, D2×P0. **`D0×P1` vs `D0×P0` isolates policy visibility
+without decomposition** — if P1 alone explains the degradation, retitle the paper around
+policy access rather than decomposition. That would be a more surprising result, not a
+failure.
 
 Headline figure: **governance failure rate vs. `constraint_distance`, one line per arm.**
 `constraint_distance` = number of component boundaries the trigger fact must cross between
 discovery and obligated action.
 
+Kill criteria, stated before the data arrives: if the pilot shows no separation between D0
+and D1/D2, the paper becomes an honest negative result plus the benchmark artifact. If
+separation exists but fact attenuation does not explain it, report the effect without the
+mechanism claim.
+
 ## What's next (in order)
 
-1. **Smoke run against a real endpoint** — one model × one task × one arm, purely to get
-   real numbers: `python -m fiducia.cli run-llm --task tasks/seed/kyc-0003.yaml --arm D1
-   --base-url ... --model ...`. Every schedule estimate below rests on cost/latency/parse
-   rates that have never been measured. Do this before anything else.
-2. **LLM user simulator.** The scripted simulator fires on substrings tuned to the fixture
+1. **LLM user simulator.** The scripted simulator fires on substrings tuned to the fixture
    scripts' wording (`"beneficial owner"`, `"25%"`). A model that asks "who else has a
    stake?" gets nothing and is scored as failing to elicit — that measures phrasing luck,
-   not diligence. kyc-0002/0004 are the exposed ones. This is a validity fix, not a
-   feature. Pin model + quantization + sampling params.
-3. **Distance coverage for the headline figure.** Declared `constraint_distance` is
-   currently {0, 0, 2, 2, 2}: two x-values, and x=0 is control tasks only. Two points
-   cannot show lines fanning out. kyc-0002 should be distance 1 per the design doc but
-   declares no `trigger_facts`, so it defaults to 0 — fixing that is the cheapest new point.
-4. Pilot: 20 tasks × 4 arms × 2 models × k=2 → per-episode cost before the full grid.
-5. Template expansion to ~100 instances, weighted toward `constraint_distance >= 2`.
+   not diligence. kyc-0002/0004 are the exposed ones. A validity fix, not a feature. Pin
+   model, quantization, and sampling params.
+2. **Termination.** Qwen3-8B never called `control_finish` in the smoke run, so every
+   episode costs a full step budget and lands `truncated`. Decide whether that is the
+   model's failure (leave it, report the truncation rate) or a prompt problem (fix CONDUCT,
+   and say so) — but measure it before changing anything.
+3. Pilot: 20 tasks × 4 arms × 2 models × k=2 → per-episode cost before the full grid. The
+   smoke run says budget ~2.3k prompt tokens and ~2.7s per model call.
+4. Template expansion to ~100 instances, weighted toward `constraint_distance >= 2`.
 
 Smaller, open:
 - kyc-0003 does not list `screening.resolve` in `allow_tools`, so the "self-clear a sanctions
   match" trap from its design doc is unreachable — the environment refuses the call, but no
   script attempts it and nothing scores the attempt.
-- `Trajectory.blocked_calls` is recorded but no metric reads it yet. It is the direct
-  evidence for escalation-authority diffusion under D2 ("the component that found the
-  problem had no authority to act on it") and should feed that metric.
+- `Trajectory.blocked_calls` is recorded but no metric reads it. It is the direct evidence
+  for escalation-authority diffusion under D2 and should feed that metric.
 - No aggregation layer: no way to run a grid, pool episodes, compute pass^k, or draw the
   headline figure. `results/` is one JSON per episode.
-- No judge, so no soft rules (KYC-07 disclosure) and no audit-reconstructability metric.
-  The ≥70% deterministic target is currently met only because the soft rules do not exist.
+- No judge, so no soft rules (KYC-07 disclosure) and no audit-reconstructability metric. The
+  ≥70% deterministic target is currently met only because the soft rules do not exist.
 
 ## Conventions
 
-- Python ≥3.11, pydantic v2, PyYAML. No heavy deps without a reason.
+- Python ≥3.11, pydantic v2, PyYAML. No heavy dependencies without a reason.
 - Tasks are YAML; scripts live under `scripts:` keyed by name (`oracle`, `naive`,
-  `pipeline_faithful`, `pipeline_lossy`; add `pipeline_lossy_late` when a task has a
-  fact chain with more than one link to break, and a named script per additional trap —
-  see kyc-0005's `undocumented`).
+  `pipeline_faithful`, `pipeline_lossy`; add `pipeline_lossy_late` when a fact chain has
+  more than one link to break, and a named script per extra trap — see kyc-0005's
+  `undocumented`).
 - Run tests with `python tests/test_e2e.py`, `test_arms.py`, `test_llm.py` (plain asserts,
-  pytest-compatible). `test_e2e` validates tasks and verifiers against the YAML fixture
-  scripts; `test_arms` validates orchestration mechanics with brains defined inline. Keep
-  them apart — mixing topology into task YAML makes both harder to change.
-- When adding a policy rule, add the task that exercises it *and* the trap script that
+  pytest-compatible). `test_e2e` validates tasks and verifiers against the YAML fixtures;
+  `test_arms` and `test_llm` validate orchestration and model plumbing with brains defined
+  inline. Keep them apart — mixing topology into task YAML makes both harder to change.
+- When adding a policy rule, add the task that exercises it **and** the trap script that
   violates it in the same change.
+- Agent actions are dicts: `{"message", "actor"?}`, `{"tool", "args", "actor"?}`,
+  `{"handoff": {"src","dst","payload"}}`, `{"blocked": {...}}`, `{"done": True}`. `actor`
+  defaults to `"agent"`, so single-component arms need no changes. An `Arm` is just an agent
+  that composes component brains and stamps attribution on their behalf, so the runner stays
+  arm-agnostic — that is what guarantees arms differ only in orchestration.
 
 ## Prior art to position against (details in docs/fiducia-novelty-sweep-2026-07.md)
 
-The field moved fast in 2026. Already taken: capability-vs-governed gap ("corrupt success",
-arXiv 2603.03116), paired should-act/should-abstain design (AgentAbstain, 2607.10059),
-hidden-policy-fact violations (PhantomPolicy, 2604.12177), escalation calibration
-(2604.08588). τ³-bench now has a banking domain. What survives here: **obligation-based**
-escalation (correctness fixed by a rule hierarchy, not model confidence), policy packs as
-portable machine-checkable artifacts, audit reconstructability as a scored metric, and the
-decomposition question. Position honestly — this is an integration + domain-depth
-contribution, not a first-mover one.
+The field moved fast in 2026. Already taken: the capability-vs-governed gap ("corrupt
+success", arXiv 2603.03116), paired should-act/should-abstain design (AgentAbstain,
+2607.10059), hidden-policy-fact violations (PhantomPolicy, 2604.12177), escalation
+calibration (2604.08588). τ³-bench now has a banking domain.
+
+What survives here:
+1. **Obligation-based escalation, not confidence-based deferral.** Others ask whether a model
+   is calibrated about its own uncertainty. Regulation does not care: a fuzzy sanctions match
+   *must* be frozen and routed to a named team; a documented two-attribute mismatch on a PEP
+   hit *must not* be escalated. Correctness is fixed by a rule hierarchy, independent of model
+   confidence. Unmeasured as far as the sweep found.
+2. **Policy packs as portable, machine-checkable artifacts** — rules as data, each declaring
+   its own verifier type.
+3. **Audit reconstructability as a scored metric** — an environment-owned log a scripted
+   auditor must be able to answer who/what/why/when/under-which-rule from.
+4. **The decomposition question** — prior work gives per-model failure signatures; nobody has
+   given per-*architecture* governance signatures.

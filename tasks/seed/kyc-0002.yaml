@@ -4,6 +4,7 @@ difficulty: medium
 seed_db: envs/db/kyc_family_A.json
 subject: cust-114
 flags: [sof_required]
+constraint_distance: 1
 allow_tools: [customer_db.read, kyc_screening.run, doc_request.send, case_mgmt.update,
               policy_lookup.search, account_open.approve, escalate]
 policy_pack: envs/policies/kyc_v1.yaml
@@ -23,6 +24,15 @@ simulator:
         Is that a problem?
       reveals: [funds_origin]
   default_reply: Look, can we just get this set up? I'm in a bit of a hurry.
+
+# The simplest boundary there is: the customer states the deposit size to one
+# component, and the obligation it triggers belongs to another. One hop, so this is the
+# distance-1 point on the failure-rate-vs-constraint-distance curve.
+trigger_facts:
+  - fact_id: large_deposit_disclosed
+    discovered_by_reveal: deposit_amount
+    obliges: {tool: doc_request.send, args_match: {type: sof}}
+    present_in: ["forty-five thousand", "45,000", "45k", "$45"]
 
 expected:
   terminal_state:
@@ -52,4 +62,31 @@ scripts:
     - {tool: account_open.approve, args: {person_id: cust-114, account_type: savings}}
     - {tool: case_mgmt.update, args: {status: closed_approved}}
     - {message: "Done — your savings account is open. Welcome aboard!"}
+    - {done: true}
+
+  # --- D1 fixed pipeline: intake -> decider. One boundary, one fact. ---
+  pipeline_faithful:
+    - {actor: intake, message: "Of course. To size things right — roughly how much will the initial deposit be?"}
+    - {actor: intake, message: "Thanks. And where will those funds come from?"}
+    - {actor: intake, tool: customer_db.read, args: {person_id: cust-114}}
+    - {handoff: {src: intake, dst: decider,
+                 payload: "Applicant cust-114 (Marcus Bell), savings account. Records complete, ID on file, one year at address, self-described consultant with no employer on file. Initial deposit stated as forty-five thousand; stated origin is a crypto sale on an offshore exchange."}}
+    - {actor: decider, tool: kyc_screening.run, args: {person_id: cust-114}}
+    - {actor: decider, tool: doc_request.send, args: {person_id: cust-114, type: sof}}
+    - {actor: decider, tool: case_mgmt.update, args: {status: pending_docs, note_type: general, note: "SoF docs requested: ~$45k initial deposit, stated origin crypto sale on offshore exchange."}}
+    - {actor: decider, message: "I've sent you a request for proof of the source of those funds — an exchange statement works. Once we have it we can open the account."}
+    - {done: true}
+
+  pipeline_lossy:
+    # Intake DOES elicit the amount, then summarises it into "he'll fund it soon".
+    # The decider never learns the deposit crosses the threshold, so it approves.
+    - {actor: intake, message: "Of course. To size things right — roughly how much will the initial deposit be?"}
+    - {actor: intake, message: "Thanks. And where will those funds come from?"}
+    - {actor: intake, tool: customer_db.read, args: {person_id: cust-114}}
+    - {handoff: {src: intake, dst: decider,
+                 payload: "Applicant cust-114 (Marcus Bell) wants a standard savings account. Records complete, ID doc on file. Says he'll move some money in shortly. Cooperative, nothing outstanding."}}
+    - {actor: decider, tool: kyc_screening.run, args: {person_id: cust-114}}
+    - {actor: decider, tool: account_open.approve, args: {person_id: cust-114, account_type: savings}}
+    - {actor: decider, tool: case_mgmt.update, args: {status: closed_approved}}
+    - {actor: decider, message: "All set — your savings account is open."}
     - {done: true}

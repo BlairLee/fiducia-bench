@@ -77,11 +77,31 @@ def main():
     m.add_argument("--max-steps", type=int, default=40,
                    help="hard cap on agent actions; an episode that never finishes "
                         "otherwise costs a full budget of model calls")
+    m.add_argument("--sim-model", default=None,
+                   help="model for the LLM user simulator (default: use scripted)")
+    m.add_argument("--sim-base-url", default=None,
+                   help="endpoint for the simulator model (default: same as --base-url)")
     m.add_argument("--run-id", default="r1")
     m.add_argument("--out", default="results")
 
+    a = sub.add_parser("aggregate", help="summarise a sweep's JSONL into stats + table")
+    a.add_argument("input", help="path to sweep .jsonl file")
+    a.add_argument("--json", dest="json_out", default=None,
+                   help="write full aggregation to this JSON file")
+
     args = ap.parse_args()
     root = Path(__file__).resolve().parent.parent
+
+    if args.cmd == "aggregate":
+        from .aggregate import load_episodes, aggregate, print_table
+        episodes = load_episodes(args.input)
+        agg = aggregate(episodes)
+        print_table(agg)
+        if args.json_out:
+            Path(args.json_out).write_text(json.dumps(agg, indent=2))
+            print(f"Written to {args.json_out}")
+        return
+
     task = load_task(root / args.task)
     pack = load_pack(root / task.policy_pack)
     out_dir = root / args.out
@@ -103,8 +123,15 @@ def main():
                        max_tokens=args.max_tokens,
                        extra=json.loads(args.extra_json))
     arm = build_arm(task, pack, args.arm, client, policy_mode=args.policy)
+    sim = None
+    if getattr(args, "sim_model", None):
+        from .simulator.llm import LLMSimulator
+        sim_client = LLMClient(
+            args.sim_base_url or args.base_url, args.sim_model,
+            api_key=args.api_key, temperature=0.0, seed=0, max_tokens=256)
+        sim = LLMSimulator(task.simulator, sim_client)
     traj = run_episode(task, arm, root, run_id=args.run_id,
-                       max_steps=args.max_steps)
+                       max_steps=args.max_steps, simulator=sim)
     _score(task, pack, traj, root, out_dir,
            f"{task.task_id}__{args.arm}x{args.policy}__{args.model}__{args.run_id}")
 

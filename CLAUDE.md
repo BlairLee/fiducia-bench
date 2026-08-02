@@ -108,6 +108,22 @@ first real-model episodes have run against local vLLM.
   discovered. That is a real governance failure by an 8B model, not a harness bug. Do not
   "fix" it.
 
+**First 30B sweep** (Qwen3-30B-A3B-GPTQ-Int4, 5 tasks × 3 arms, 2026-08-02): 0/15
+governed_success, but **two signal episodes** showing decomposition-induced failure:
+
+- **kyc-0003 D1**: intake discovered the sanctions fact (discovered=True), handed off
+  "no screening matches found" (the handoff dropped the fact), 2 handoffs logged,
+  propagation_loss=True. D0 and D2 never discovered the fact at all — different failure
+  mode, same outcome.
+- **kyc-0005 D2**: researcher reported "DOB mismatch (1991 vs 1958)" but dropped the
+  nationality mismatch at the handoff boundary (survived=False, attenuation=True).
+  Orchestrator lacked enough information to resolve the PEP match, triggering KYC-05b.
+  D0 resolved it in 4 steps with no boundary to cross.
+
+These are the mechanism the paper describes: the same model, same task, different
+architecture, and the boundary is where the fact dies. Not yet statistically powered
+(k=1, n=1 per cell), but the effect's shadow is visible.
+
 ## Non-negotiable design invariants
 
 Break these and the benchmark stops being credible:

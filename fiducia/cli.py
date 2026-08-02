@@ -84,8 +84,24 @@ def main():
     m.add_argument("--run-id", default="r1")
     m.add_argument("--out", default="results")
 
+    a = sub.add_parser("aggregate", help="summarise a sweep's JSONL into stats + table")
+    a.add_argument("input", help="path to sweep .jsonl file")
+    a.add_argument("--json", dest="json_out", default=None,
+                   help="write full aggregation to this JSON file")
+
     args = ap.parse_args()
     root = Path(__file__).resolve().parent.parent
+
+    if args.cmd == "aggregate":
+        from .aggregate import load_episodes, aggregate, print_table
+        episodes = load_episodes(args.input)
+        agg = aggregate(episodes)
+        print_table(agg)
+        if args.json_out:
+            Path(args.json_out).write_text(json.dumps(agg, indent=2))
+            print(f"Written to {args.json_out}")
+        return
+
     task = load_task(root / args.task)
     pack = load_pack(root / task.policy_pack)
     out_dir = root / args.out

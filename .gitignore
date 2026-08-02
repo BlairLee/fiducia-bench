@@ -1,4 +1,6 @@
 __pycache__/
 *.pyc
 results/
+tasks/expanded/
+envs/db/expanded/
 .venv/

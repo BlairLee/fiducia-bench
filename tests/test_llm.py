@@ -177,6 +177,48 @@ def test_every_component_is_told_whose_case_it_is():
     assert "bene-501" not in prompts.d0_prompt(task, pack)
 
 
+# ---------- factor P end-to-end ----------
+
+def test_p1_episode_discovers_rules_via_tool_call():
+    """P1's contract: the same rules P0 pastes into context are retrievable via
+    policy_lookup.search. This test runs a full episode under P1 where the model
+    calls the tool and gets a matching result."""
+    task, pack = _task()
+    client = _client([
+        _call("policy_lookup__search", '{"query": "sanctions"}'),
+        _call("kyc_screening__run", '{"person_id": "bene-501"}'),
+        _call("transactions__freeze", '{"reason": "screening match"}'),
+        _call("escalate", '{"target": "sanctions_team", "reason": "sanctions match"}'),
+        _call(FINISH),
+    ])
+    arm = build_arm(task, pack, "D0", client, policy_mode="P1")
+    traj = run_episode(task, arm, ROOT)
+    # The tool result should contain KYC-04 (sanctions rule)
+    policy_call = [t for turn in traj.turns for t in turn.tool_calls
+                   if t.tool == "policy_lookup.search"]
+    assert policy_call, "model never called policy_lookup.search"
+    results = policy_call[0].result.get("results", [])
+    rule_ids = {r["rule_id"] for r in results}
+    assert "KYC-04" in rule_ids, f"sanctions query returned {rule_ids}"
+    # And the system prompt does NOT contain the rule text
+    system_msg = client.transport.requests[0]["messages"][0]["content"]
+    assert "KYC-04" not in system_msg, "P1 prompt leaked rule text"
+    assert "policy_lookup.search" in system_msg, "P1 prompt missing tool hint"
+
+
+def test_p1_and_p0_have_identical_policy_corpus():
+    """The factor confounds access mode with policy content if the corpuses differ."""
+    task, pack = _task()
+    # P0: rules are in the prompt
+    p0_prompt = prompts.d0_prompt(task, pack, "P0")
+    p0_rules = {r.rule_id for r in pack.rules if r.rule_id in p0_prompt}
+    # P1: rules are in _policy_texts via the tool
+    traj = run_episode(task, _StubAgent(), ROOT)
+    p1_rules = {r["rule_id"] for r in traj.final_state["_policy_texts"]}
+    assert p0_rules == p1_rules, f"P0 has {p0_rules - p1_rules} extra, " \
+                                  f"P1 has {p1_rules - p0_rules} extra"
+
+
 # ---------- full episodes ----------
 
 def test_an_episode_that_runs_out_of_steps_is_marked_truncated():

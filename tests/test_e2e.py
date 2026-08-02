@@ -21,7 +21,7 @@ def _run(task_file, script_name, arm="D0"):
     agent = ScriptedAgent(script_name, task.scripts[script_name])
     traj = run_episode(task, agent, ROOT, arm=arm)
     verdict = verify(task, pack, traj, str(ROOT / task.seed_db))
-    return task, traj, verdict, decomposition_report(task, traj, verdict)
+    return task, traj, verdict, decomposition_report(task, traj, verdict, pack)
 
 
 # ---------- phase 1: governance verifiers ----------
@@ -302,6 +302,80 @@ def test_trigger_fact_must_declare_exactly_one_direction():
             assert "obliges / forbids" in str(e), e
         else:
             raise AssertionError(f"accepted a fact with no single direction: {kwargs}")
+
+
+# ---------- audit reconstructability ----------
+# The metric answers five questions from the env-owned audit log alone.
+# An oracle run has no violations, so rule=1.0. A naive run that violates
+# a rule exercises the rule dimension end-to-end (rule_id present in pack).
+
+def test_audit_reconstructability_oracle_scores_full():
+    """A clean oracle run should score 1.0 on all dimensions."""
+    _, traj, verdict, rep = _run("tasks/seed/kyc-0003.yaml", "oracle")
+    ar = rep["audit_reconstructability"]
+    dims = ar["dimensions"]
+    assert dims["who"] == 1.0, dims
+    assert dims["what"] == 1.0, dims
+    assert dims["when"] == 1.0, dims
+    assert dims["why"] == 1.0, dims
+    assert dims["rule"] == 1.0, dims
+    assert ar["overall"] == 1.0, ar
+
+
+def test_audit_reconstructability_violation_has_traceable_rule():
+    """A naive run that violates a rule must score rule=1.0 — rule_id in pack."""
+    _, traj, verdict, rep = _run("tasks/seed/kyc-0003.yaml", "naive")
+    ar = rep["audit_reconstructability"]
+    assert verdict["violations"], "expected at least one violation"
+    assert ar["dimensions"]["rule"] == 1.0, ar
+    # overall should still be 1.0 — the env log is well-formed even when the agent misbehaves
+    assert ar["overall"] == 1.0, ar
+
+
+def test_audit_reconstructability_escalation_reason_recorded():
+    """The escalate tool records a reason; why-dimension should be 1.0."""
+    _, traj, verdict, rep = _run("tasks/seed/kyc-0003.yaml", "oracle")
+    # oracle escalates — confirm the env log carries the reason
+    escalate_entries = [e for e in traj.env_audit_log if e.get("tool") == "escalate"]
+    assert escalate_entries, "expected at least one escalate call"
+    for e in escalate_entries:
+        assert e["args"].get("reason", ""), f"missing reason in audit log entry: {e}"
+    assert rep["audit_reconstructability"]["dimensions"]["why"] == 1.0
+
+
+def test_audit_reconstructability_monotonic_seq():
+    """Sequence numbers must be strictly increasing across the whole episode."""
+    _, traj, _, rep = _run("tasks/seed/kyc-0004.yaml", "pipeline_faithful", arm="D1")
+    seqs = [e["seq"] for e in traj.env_audit_log]
+    for a, b in zip(seqs, seqs[1:]):
+        assert b > a, f"non-monotonic seqs: {a}, {b}"
+    assert rep["audit_reconstructability"]["dimensions"]["when"] == 1.0
+
+
+def test_audit_reconstructability_without_pack_and_violations():
+    """Passing pack=None when violations exist must report rule=0.0."""
+    from fiducia.verify.decomposition import audit_reconstructability
+    task = load_task(ROOT / "tasks/seed/kyc-0003.yaml")
+    pack = load_pack(ROOT / task.policy_pack)
+    agent = ScriptedAgent("naive", task.scripts["naive"])
+    traj = run_episode(task, agent, ROOT, arm="D0")
+    verdict = verify(task, pack, traj, str(ROOT / task.seed_db))
+    assert verdict["violations"], "expected violations for naive run"
+    ar = audit_reconstructability(traj, verdict, pack=None)
+    assert ar["dimensions"]["rule"] == 0.0, ar
+
+
+def test_audit_reconstructability_is_pure_function():
+    """Calling audit_reconstructability twice on the same inputs returns equal results."""
+    from fiducia.verify.decomposition import audit_reconstructability
+    task = load_task(ROOT / "tasks/seed/kyc-0003.yaml")
+    pack = load_pack(ROOT / task.policy_pack)
+    agent = ScriptedAgent("oracle", task.scripts["oracle"])
+    traj = run_episode(task, agent, ROOT, arm="D0")
+    verdict = verify(task, pack, traj, str(ROOT / task.seed_db))
+    r1 = audit_reconstructability(traj, verdict, pack)
+    r2 = audit_reconstructability(traj, verdict, pack)
+    assert r1 == r2, (r1, r2)
 
 
 if __name__ == "__main__":

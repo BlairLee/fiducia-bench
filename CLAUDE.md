@@ -66,16 +66,16 @@ The author works on enterprise agent systems professionally. This repo must stay
 
 Phase 2 in progress. Seed set 0001–0005, arm harness, and LLM components all built;
 first real-model episodes have run against local vLLM.
-`test_e2e.py` 27 · `test_arms.py` 13 · `test_llm.py` 21 — all hermetic, no network.
+`test_e2e.py` 28 · `test_arms.py` 13 · `test_llm.py` 28 — all hermetic, no network.
 
 - Environment: seeded JSON state + deterministic tools, **environment-owned audit log**
-- Simulator: scripted, trigger-substring driven (LLM simulator still to come). Hidden-info
+- Simulator: scripted (trigger-substring) **and LLM** (semantic topic-judge). Hidden-info
   disclosures are logged as `Reveal` records, so **elicitation is attributable** and can
   trigger obligations the same way a tool result can
 - Verifiers: deterministic policy checks via **trajectory replay**. Check types:
   `require_before`, `allow_list`, `state_assert`, `forbid_when`
 - Decomposition metrics: actor attribution, handoff logging, fact attenuation, propagation
-  loss, violation locus, escalation diffusion, plus **fact chains**
+  loss, violation locus, escalation diffusion, authority diffusion, plus **fact chains**
   (`TriggerFact.depends_on` → `blocked_upstream`, `chain_broken_at`). A fact survives a
   boundary only if **every** handoff on the path from discovery to the acting component
   carries it — `any` would pass a distance-2 task whose last hop dropped it
@@ -156,8 +156,10 @@ fiducia/
   arms/d0.py d1.py d2.py   one class per architecture; ARMS registry in __init__
   verify/checks.py         policy rules + task expectations -> verdict
   verify/decomposition.py  propagation loss, fact attenuation, violation locus, diffusion
+  aggregate.py             sweep JSONL -> per-cell stats, pass^k, headline figure data
   runner.py                episode loop; actor + handoff recording
-  cli.py                   `run` replays a fixture script; `run-llm` drives an arm on a model
+  simulator/llm.py         LLM user simulator (semantic topic-judge, canned replies)
+  cli.py                   `run` | `run-llm` | `aggregate`
 envs/db/                   seed databases (synthetic)
 envs/policies/             machine-readable policy packs
 tasks/seed/                hand-written seed tasks
@@ -189,29 +191,31 @@ mechanism claim.
 
 ## What's next (in order)
 
-1. **LLM user simulator.** The scripted simulator fires on substrings tuned to the fixture
-   scripts' wording (`"beneficial owner"`, `"25%"`). A model that asks "who else has a
-   stake?" gets nothing and is scored as failing to elicit — that measures phrasing luck,
-   not diligence. kyc-0002/0004 are the exposed ones. A validity fix, not a feature. Pin
-   model, quantization, and sampling params.
-2. **Termination.** Qwen3-8B never called `control_finish` in the smoke run, so every
-   episode costs a full step budget and lands `truncated`. Decide whether that is the
-   model's failure (leave it, report the truncation rate) or a prompt problem (fix CONDUCT,
-   and say so) — but measure it before changing anything.
-3. Pilot: 20 tasks × 4 arms × 2 models × k=2 → per-episode cost before the full grid. The
-   smoke run says budget ~2.3k prompt tokens and ~2.7s per model call.
-4. Template expansion to ~100 instances, weighted toward `constraint_distance >= 2`.
+1. **Pilot on a capable model.** Qwen3-8B is below the benchmark's capability floor (never
+   asks for the wire beneficiary under any arm). Qwen3-30B-A3B downloading; once available,
+   run 5 tasks × 3 arms × P0 to verify it can complete the basic workflow, then expand to
+   the full grid with k=2 repeats.
+2. **Template expansion** to ~100 instances, weighted toward `constraint_distance >= 2`.
+   Data-driven variation proven (stake % flips ground truth); generator infrastructure
+   needed.
+3. **P1 grid.** D0×P1 vs D0×P0 isolates policy visibility. The P1 prompt and tool are
+   verified end-to-end (the same corpus, different access), but no model episodes exist yet.
+
+Done since last update:
+- ✓ LLM user simulator (`simulator/llm.py`): semantic topic-judge replaces substring
+  matching. Verified: "any other parties with significant ownership interest?" triggers
+  ownership disclosure despite zero substring overlap with any trigger.
+- ✓ CONDUCT fix: measured before/after on 15 episodes; tool calls 0→4-11, truncation
+  15/15→12/15, prompt tokens 957k→785k.
+- ✓ Aggregation layer (`aggregate.py`, CLI `aggregate`): sweep JSONL → per-cell stats,
+  Wilson CI, pass^k, headline figure data.
+- ✓ `authority_diffusion` metric: `blocked_calls` now feeds a per-actor/per-tool count.
+- ✓ kyc-0003 self-clear trap: `screening.resolve` in allow_tools, forbidden_actions entry,
+  scripted trap, test.
 
 Smaller, open:
-- kyc-0003 does not list `screening.resolve` in `allow_tools`, so the "self-clear a sanctions
-  match" trap from its design doc is unreachable — the environment refuses the call, but no
-  script attempts it and nothing scores the attempt.
-- `Trajectory.blocked_calls` is recorded but no metric reads it. It is the direct evidence
-  for escalation-authority diffusion under D2 and should feed that metric.
-- No aggregation layer: no way to run a grid, pool episodes, compute pass^k, or draw the
-  headline figure. `results/` is one JSON per episode.
-- No judge, so no soft rules (KYC-07 disclosure) and no audit-reconstructability metric. The
-  ≥70% deterministic target is currently met only because the soft rules do not exist.
+- No judge, so no soft rules (KYC-07 disclosure). The ≥70% deterministic target is
+  currently met only because the soft rules do not exist.
 
 ## Conventions
 

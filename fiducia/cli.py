@@ -19,7 +19,7 @@ def _score(task, pack, traj, root, out_dir, label):
     save_trajectory(traj, out_dir)
     verdict = verify(task, pack, traj, str(root / task.seed_db))
     report = {**verdict, "truncated": traj.truncated,
-              "decomposition": decomposition_report(task, traj, verdict)}
+              "decomposition": decomposition_report(task, traj, verdict, pack)}
     if traj.llm_calls:
         report["cost"] = cost_summary(traj)
     (out_dir / f"{slug(label)}.verdict.json").write_text(json.dumps(report, indent=2))

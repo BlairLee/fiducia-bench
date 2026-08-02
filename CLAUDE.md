@@ -121,8 +121,15 @@ governed_success, but **two signal episodes** showing decomposition-induced fail
   D0 resolved it in 4 steps with no boundary to cross.
 
 These are the mechanism the paper describes: the same model, same task, different
-architecture, and the boundary is where the fact dies. Not yet statistically powered
-(k=1, n=1 per cell), but the effect's shadow is visible.
+architecture, and the boundary is where the fact dies.
+
+**Signal confirmation** (k=3, seed=1/2/3, 2026-08-02):
+- **kyc-0005 D2: attenuation=3/3, prop_loss=2/3.** Stable. Every run discovers
+  the fact, every run drops it at the boundary. This is the confirmed effect.
+- kyc-0003 D1: discovered=1/3. Unstable — model capability, not mechanism.
+- Termination: 18/19 P0 episodes truncated. CONDUCT or model limitation.
+- P1 vs P0: both at floor (0/5 governed_success each). No signal until the model
+  can pass P0.
 
 ## Non-negotiable design invariants
 

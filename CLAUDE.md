@@ -131,6 +131,34 @@ architecture, and the boundary is where the fact dies.
 - P1 vs P0: both at floor (0/5 governed_success each). No signal until the model
   can pass P0.
 
+**Qwen2.5-32B-Instruct-GPTQ-Int4** (5 tasks × 3 arms × P0 × k=2, 2026-08-11):
+0/30 governed_success, but **dynamic range appeared** — the model is above the
+capability floor that 8B and 30B-A3B both sat below.
+
+Key numbers (pooled k=2, n=10 per arm):
+
+|            | D0    | D1     | D2     |
+|------------|-------|--------|--------|
+| truncated  | 2/10  | 6/10   | 5/10   |
+| discovered | 4/10  | 3/10   | 2/10   |
+| attenuation| 0     | **1**  | **1**  |
+| prop_loss  | **2** | **2**  | 0      |
+| handoffs   | 0     | 11     | 14     |
+
+- **kyc-0003 D0** (both seeds): discovered the sanctions fact, froze the wire, but
+  never escalated to sanctions_team. A pure reasoning failure — D0 has no boundary
+  to blame. This is precisely what the control arm should show.
+- **kyc-0005 D1 seed=1**: survived=False, attenuation=True — the exculpating fact
+  died at the boundary, reproducing the 30B-A3B D2 signal on a different architecture
+  and a different model. Same mechanism.
+- **kyc-0005 D2 seed=0**: survived=True — the fact reached the orchestrator intact.
+  D2 did better than D1 here: the structured delegation ("check if FP") carried the
+  comparison data that D1's free-form summary dropped.
+- **D0's failures and D1/D2's failures are qualitatively different.** D0's prop_loss
+  is all from kyc-0003 (sanctions match found, escalation not made — judgment failure).
+  D1's attenuation is from kyc-0005 (fact present but dropped in the handoff summary —
+  boundary failure). This is the separation the paper needs.
+
 ## Non-negotiable design invariants
 
 Break these and the benchmark stops being credible:

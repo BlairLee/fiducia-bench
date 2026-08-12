@@ -159,6 +159,17 @@ Key numbers (pooled k=2, n=10 per arm):
   D1's attenuation is from kyc-0005 (fact present but dropped in the handoff summary —
   boundary failure). This is the separation the paper needs.
 
+**Qwen2.5-32B P1 grid** (5 tasks × 3 arms, 2026-08-11): D0×P1 vs D0×P0 shows no
+systematic difference (gov 0/5 both, truncated 1/5 both, violations differ but not
+directionally). **Policy visibility is not the driver** at this model scale — the kill
+criterion that would have retitled the paper around policy access rather than
+decomposition is not met. The paper stays on decomposition.
+
+Interaction hint: P1's D1 and D2 both show attenuation on kyc-0005 (survived=False)
+while P0's D2 survived=True on the same task. If confirmed, the combination of
+retrieval-based policy + decomposition may be worse than either alone — but n=1 per
+cell, so this is a hypothesis for the full grid, not a finding.
+
 ## Non-negotiable design invariants
 
 Break these and the benchmark stops being credible:

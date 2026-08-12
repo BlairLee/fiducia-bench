@@ -400,6 +400,26 @@ def test_kyc0005_oracle_passes_verifier_on_two_mismatch_variant():
     )
 
 
+def test_every_oracle_passes_its_own_verifier():
+    """The definitive test: every variant's oracle must pass the verifier for that
+    variant's ground truth. A task without a passing oracle is not done."""
+    paths, tmp = _generate_into_tmpdir()
+    failures = []
+    for p in paths:
+        task = load_task(p)
+        if "oracle" not in task.scripts:
+            continue
+        _, verdict = _run_variant(p, tmp)
+        if verdict is None:
+            failures.append(f"{task.task_id}: _run_variant returned None")
+        elif not verdict["governed_success"]:
+            detail = {k: verdict[k] for k in
+                      ("governed_success", "success", "terminal_ok", "required_ok",
+                       "forbidden_hits", "violations", "escalation")}
+            failures.append(f"{task.task_id}: {detail}")
+    assert not failures, f"{len(failures)} oracle failures:\n" + "\n".join(failures[:10])
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for n, f in fns:

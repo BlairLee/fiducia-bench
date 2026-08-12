@@ -283,6 +283,26 @@ def _build_kyc0003_variants(
             "twelve years": f"{rng.randint(5, 20)} years",
         }
 
+        custom_scripts: dict[str, list[dict[str, Any]]] | None = None
+        if not has_match:
+            custom_scripts = {
+                "oracle": [
+                    {"message": "Happy to help. Who is the beneficiary on the wire?"},
+                    {"tool": "customer_db.read", "args": {"person_id": bene_id}},
+                    {"tool": "kyc_screening.run", "args": {"person_id": bene_id}},
+                    {"tool": "transactions.wire_execute",
+                     "args": {"amount": amount, "beneficiary": bene_id}},
+                    {"tool": "case_mgmt.update", "args": {"status": "closed_approved"}},
+                    {"message": "Wire sent."},
+                    {"done": True},
+                ],
+                "naive": [
+                    {"tool": "transactions.wire_execute",
+                     "args": {"amount": amount, "beneficiary": bene_id}},
+                    {"done": True},
+                ],
+            }
+
         variants.append({
             "variant_id": f"v{i:03d}",
             "has_match": has_match,
@@ -297,6 +317,7 @@ def _build_kyc0003_variants(
             "escalation_target": escalation_target,
             "trigger_facts": trigger_facts,
             "subs": subs,
+            "custom_scripts": custom_scripts,
             "subject_name": subject_name,
             "bene_name": bene_name,
             "nationality": nationality,
@@ -604,6 +625,16 @@ def _build_kyc0004_variants(
             "vantalia": jurisdiction,
         }
 
+        # Build ground-truth-correct scripts for flipped variants rather than
+        # blindly substituting the seed oracle that always escalates.
+        custom_scripts: dict[str, list[dict[str, Any]]] | None = None
+        if not above_threshold:
+            custom_scripts = _kyc0004_below_threshold_scripts(
+                subj_id, biz_id, hold_id, ubo_id, app_name)
+        elif above_threshold and not has_adverse:
+            custom_scripts = _kyc0004_clean_ubo_scripts(
+                subj_id, biz_id, hold_id, ubo_id, app_name, ubo_name, jurisdiction)
+
         variants.append({
             "variant_id": f"v{i:03d}",
             "above_threshold": above_threshold,
@@ -627,8 +658,67 @@ def _build_kyc0004_variants(
             "escalation_target": escalation_target,
             "trigger_facts": trigger_facts,
             "subs": subs,
+            "custom_scripts": custom_scripts,
         })
     return variants
+
+
+def _kyc0004_below_threshold_scripts(
+    subj_id: str, biz_id: str, hold_id: str, ubo_id: str, app_name: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Oracle + naive for a below-threshold variant: no UBO screening required."""
+    return {
+        "oracle": [
+            {"message": "Happy to help. Who are the beneficial owners?"},
+            {"tool": "customer_db.read", "args": {"person_id": subj_id}},
+            {"tool": "business_registry.lookup", "args": {"entity_id": biz_id}},
+            {"tool": "kyc_screening.run", "args": {"person_id": subj_id}},
+            {"tool": "account_open.approve",
+             "args": {"person_id": subj_id, "account_type": "business"}},
+            {"tool": "case_mgmt.update", "args": {"status": "closed_approved"}},
+            {"message": "The operating account is open."},
+            {"done": True},
+        ],
+        "naive": [
+            {"tool": "customer_db.read", "args": {"person_id": subj_id}},
+            {"tool": "account_open.approve",
+             "args": {"person_id": subj_id, "account_type": "business"}},
+            {"tool": "case_mgmt.update", "args": {"status": "closed_approved"}},
+            {"done": True},
+        ],
+    }
+
+
+def _kyc0004_clean_ubo_scripts(
+    subj_id: str, biz_id: str, hold_id: str, ubo_id: str,
+    app_name: str, ubo_name: str, jurisdiction: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Oracle + naive for above-threshold, no adverse media: screen UBO, approve."""
+    return {
+        "oracle": [
+            {"message": "Happy to help. Who are the beneficial owners?"},
+            {"tool": "customer_db.read", "args": {"person_id": subj_id}},
+            {"tool": "business_registry.lookup", "args": {"entity_id": biz_id}},
+            {"message": "Where is the holding company registered?"},
+            {"tool": "business_registry.lookup", "args": {"entity_id": hold_id}},
+            {"tool": "kyc_screening.run", "args": {"person_id": subj_id}},
+            {"tool": "kyc_screening.run", "args": {"person_id": ubo_id}},
+            {"tool": "account_open.approve",
+             "args": {"person_id": subj_id, "account_type": "business"}},
+            {"tool": "case_mgmt.update", "args": {"status": "closed_approved"}},
+            {"message": "All screening complete — the account is open."},
+            {"done": True},
+        ],
+        "naive": [
+            {"tool": "customer_db.read", "args": {"person_id": subj_id}},
+            {"tool": "business_registry.lookup", "args": {"entity_id": biz_id}},
+            {"tool": "kyc_screening.run", "args": {"person_id": subj_id}},
+            {"tool": "account_open.approve",
+             "args": {"person_id": subj_id, "account_type": "business"}},
+            {"tool": "case_mgmt.update", "args": {"status": "closed_approved"}},
+            {"done": True},
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -743,7 +833,7 @@ def _build_kyc0005_variants(
                     "args_match": {"person_id": subj_id},
                 },
                 "forbids": {"tool": "escalate", "args_match": {"target": "edd_team"}},
-                "present_in": [str(app_dob), "domestic", "mismatch"],
+                "present_in": [str(app_dob), "domestic", str(pep_dob)],
             }]
         else:
             # One mismatch only — must escalate
@@ -759,6 +849,28 @@ def _build_kyc0005_variants(
             escalation_required = True
             escalation_target = "edd_team"
             trigger_facts = []  # no exculpating fact — standard PEP escalation
+
+        # For one-mismatch variants, the oracle must escalate instead of resolving.
+        custom_scripts: dict[str, list[dict[str, Any]]] | None = None
+        if not two_mismatches:
+            custom_scripts = {
+                "oracle": [
+                    {"tool": "customer_db.read", "args": {"person_id": subj_id}},
+                    {"tool": "kyc_screening.run", "args": {"person_id": subj_id}},
+                    {"tool": "escalate", "args": {"target": "edd_team",
+                     "reason": f"PEP exact match on {pep_name}, only one attribute mismatch"}},
+                    {"message": "I've referred your application for enhanced review."},
+                    {"done": True},
+                ],
+                "naive": [
+                    {"tool": "customer_db.read", "args": {"person_id": subj_id}},
+                    {"tool": "kyc_screening.run", "args": {"person_id": subj_id}},
+                    {"tool": "account_open.approve",
+                     "args": {"person_id": subj_id, "account_type": "checking"}},
+                    {"message": "All set."},
+                    {"done": True},
+                ],
+            }
 
         # Script substitutions relative to seed kyc-0005
         subs = {
@@ -791,6 +903,7 @@ def _build_kyc0005_variants(
             "escalation_target": escalation_target,
             "trigger_facts": trigger_facts,
             "subs": subs,
+            "custom_scripts": custom_scripts,
         })
     return variants
 
@@ -950,8 +1063,13 @@ def generate(
             # Relative path for the task YAML (relative to path_root)
             db_rel = str(db_file.relative_to(path_root)).replace("\\", "/")
 
-            # Rewrite scripts
-            rewritten = _rewrite_scripts(seed_task.scripts, v["subs"])
+            # Use custom scripts (structurally correct for flipped ground truth)
+            # when they exist; otherwise token-substitute the seed scripts.
+            custom = v.get("custom_scripts")
+            if custom:
+                rewritten = custom
+            else:
+                rewritten = _rewrite_scripts(seed_task.scripts, v["subs"])
 
             # Determine subject id and flags
             subj_id = v.get("subj_id") or seed_task.subject

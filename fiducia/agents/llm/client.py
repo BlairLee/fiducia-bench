@@ -89,6 +89,12 @@ class LLMClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+            # The harness processes one action per step. Parallel tool calls produce
+            # multiple tool_call_ids that must all be answered before the next API call,
+            # and the runner has no mechanism for that. Disabling parallel calls keeps
+            # the conversation well-formed without changing what the model can do — it
+            # just does it sequentially.
+            payload["parallel_tool_calls"] = False
         started = time.monotonic()
         response = self.transport.post(
             f"{self.base_url}/chat/completions", payload,

@@ -42,21 +42,32 @@ class LLMBrain:
     # ---- observation -> conversation ----
 
     def _ingest(self, observation: dict[str, Any]) -> None:
-        refusal = observation.get("refusal")
-        if refusal and self._pending_call:
-            self._answer_call(f"refused: {refusal.get('reason', 'not available to you')}")
-        result = observation.get("last_tool_result")
-        if self._pending_call and result is not None:
-            self._answer_call(json.dumps(result, default=str))
+        # OpenAI requires every assistant message with tool_calls to be followed by a
+        # tool-role reply. Resolve the pending call before anything else touches the
+        # conversation — otherwise a user message lands after an unanswered tool_calls
+        # and the API rejects the whole request.
+        if self._pending_call:
+            refusal = observation.get("refusal")
+            result = observation.get("last_tool_result")
+            inbox = observation.get("inbox")
+            if refusal:
+                self._answer_call(
+                    f"refused: {refusal.get('reason', 'not available to you')}")
+            elif result is not None:
+                self._answer_call(json.dumps(result, default=str))
+            elif inbox and inbox != self._last_inbox:
+                self._last_inbox = inbox
+                self._answer_call(inbox)
+            else:
+                # Nothing answered it — the call was a control action (handoff/finish)
+                # that the runner handled without producing a tool result. Close it.
+                self._answer_call("ok")
 
         inbox = observation.get("inbox")
         if inbox and inbox != self._last_inbox:
             self._last_inbox = inbox
-            if self._pending_call:            # the answer to control_delegate
-                self._answer_call(inbox)
-            else:
-                self.messages.append({"role": "user",
-                                      "content": f"Handed to you:\n\n{inbox}"})
+            self.messages.append({"role": "user",
+                                  "content": f"Handed to you:\n\n{inbox}"})
 
         user = observation.get("last_user_message")
         if user:
@@ -80,7 +91,13 @@ class LLMBrain:
                 if "tool" in action or "delegate" in action:
                     self._pending_call = tool_call_id(response)
                 return action
-            self.messages.append(assistant_message(response))
+            # On parse failure, strip tool_calls from the assistant message: OpenAI
+            # requires a tool-role reply after every tool_calls, and we have none.
+            failed_msg = assistant_message(response)
+            failed_msg.pop("tool_calls", None)
+            if not failed_msg.get("content"):
+                failed_msg["content"] = "(malformed response)"
+            self.messages.append(failed_msg)
             self.messages.append({"role": "user",
                                   "content": REPAIR_PROMPT.format(error=error)})
         # Out of repairs. Stopping is the honest action: the component has produced

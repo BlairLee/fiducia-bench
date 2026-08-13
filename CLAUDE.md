@@ -64,9 +64,8 @@ The author works on enterprise agent systems professionally. This repo must stay
 
 ## Current status
 
-Phase 2 in progress. Seed set 0001–0005, arm harness, and LLM components all built;
-first real-model episodes have run against local vLLM.
-`test_e2e.py` 28 · `test_arms.py` 13 · `test_llm.py` 28 — all hermetic, no network.
+Phase 2 complete. Full grid (100 variants × 3 arms = 300 episodes) run on Qwen2.5-32B.
+`test_e2e.py` 34 · `test_arms.py` 13 · `test_llm.py` 28 — all hermetic, no network.
 
 - Environment: seeded JSON state + deterministic tools, **environment-owned audit log**
 - Simulator: scripted (trigger-substring) **and LLM** (semantic topic-judge). Hidden-info
@@ -170,6 +169,33 @@ while P0's D2 survived=True on the same task. If confirmed, the combination of
 retrieval-based policy + decomposition may be worse than either alone — but n=1 per
 cell, so this is a hypothesis for the full grid, not a finding.
 
+**Full grid** (Qwen2.5-32B, 100 variants × 3 arms × P0 = 300 episodes, 2026-08-12):
+
+|            | D0 (n=100) | D1 (n=100) | D2 (n=100) |
+|------------|-----------|-----------|-----------|
+| gov success| 0         | 3         | 1         |
+| truncated  | 37        | 39        | 52        |
+| discovered | 16        | 18        | 27        |
+| attenuation| **0**     | **9**     | **22**    |
+| prop_loss  | 0         | 4         | 11        |
+
+**Attenuation rate conditional on discovery, at distance 2 (the paper's headline):**
+- D0: **0/16 (0%)**
+- D1: **9/16 (56%)**
+- D2: **22/26 (85%)**
+
+Per family at distance 2:
+- kyc-0003: D0 0 discovered, D1 0, D2 0 — model rarely asks the beneficiary's name
+- kyc-0004 D2: 10/25 discovered, 8/10 attenuation (80%)
+- kyc-0005 D0: 16/25 discovered, 0 attenuation; D1: 16/25 disc, 9/16 att (56%);
+  D2: 16/25 disc, 14/16 att (88%)
+
+D2 discovers **more** facts than D0 (27 vs 16) but attenuates **more** of them (22/27
+= 81% vs 0/16 = 0%). The architecture that is better at finding the policy-relevant
+fact is worse at carrying it to the component that must act.
+
+Cost: 12.5M prompt tokens, 5.1 hours wall, zero API spend (local vLLM).
+
 ## Non-negotiable design invariants
 
 Break these and the benchmark stops being credible:
@@ -253,27 +279,22 @@ mechanism claim.
 
 ## What's next (in order)
 
-1. **Pilot on a capable model.** Qwen3-8B is below the benchmark's capability floor (never
-   asks for the wire beneficiary under any arm). Qwen3-30B-A3B downloading; once available,
-   run 5 tasks × 3 arms × P0 to verify it can complete the basic workflow, then expand to
-   the full grid with k=2 repeats.
-2. **Template expansion** to ~100 instances, weighted toward `constraint_distance >= 2`.
-   Data-driven variation proven (stake % flips ground truth); generator infrastructure
-   needed.
-3. **P1 grid.** D0×P1 vs D0×P0 isolates policy visibility. The P1 prompt and tool are
-   verified end-to-end (the same corpus, different access), but no model episodes exist yet.
+1. **Paper submission.** Draft v1 written (`docs/paper-draft-v1.md`, ~3500 words). §5
+   updated with 300-episode data. Needs: LaTeX conversion, figures (the headline
+   attenuation-vs-distance chart), anonymization, appendices.
+2. **Third model.** The full grid uses Qwen2.5-32B only. A frontier model (API) would
+   strengthen the generalization claim and provide a nonzero governed_success baseline
+   for the headline chart.
+3. **LLM simulator grid.** Re-run the 300 episodes with the semantic topic-judge simulator
+   to measure how much the scripted simulator's phrasing-luck artifact depresses discovery
+   rates. The conditional attenuation rate should be unaffected, but the denominator grows.
 
-Done since last update:
-- ✓ LLM user simulator (`simulator/llm.py`): semantic topic-judge replaces substring
-  matching. Verified: "any other parties with significant ownership interest?" triggers
-  ownership disclosure despite zero substring overlap with any trigger.
-- ✓ CONDUCT fix: measured before/after on 15 episodes; tool calls 0→4-11, truncation
-  15/15→12/15, prompt tokens 957k→785k.
-- ✓ Aggregation layer (`aggregate.py`, CLI `aggregate`): sweep JSONL → per-cell stats,
-  Wilson CI, pass^k, headline figure data.
-- ✓ `authority_diffusion` metric: `blocked_calls` now feeds a per-actor/per-tool count.
-- ✓ kyc-0003 self-clear trap: `screening.resolve` in allow_tools, forbidden_actions entry,
-  scripted trap, test.
+Done:
+- ✓ Full grid: 100 variants × 3 arms × P0 = 300 episodes on Qwen2.5-32B (5.1h, 12.5M tok)
+- ✓ P1 grid: 5 tasks × 3 arms on both 30B-A3B and 2.5-32B (no systematic P0/P1 difference)
+- ✓ Template expansion: 100 variants, all oracles verified
+- ✓ Pilot: Qwen3-8B (capability floor), Qwen3-30B-A3B (signal confirmed k=4)
+- ✓ LLM user simulator, aggregation layer, CONDUCT fix, authority_diffusion, kyc-0003 trap
 
 Smaller, open:
 - No judge, so no soft rules (KYC-07 disclosure). The ≥70% deterministic target is

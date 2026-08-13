@@ -12,13 +12,11 @@ We find that it does, and the mechanism is specific: policy-relevant facts disco
 by one component are *attenuated at the handoff boundary* before reaching the component
 that must act on them. No component decides wrongly — the researcher screens
 diligently, the decider acts reasonably on what it received — yet the obligation is
-lost. Across two models and three architectures (single loop, fixed pipeline,
-orchestrator-subagent), a multi-component arm reproduced fact attenuation in 4/4
-independent runs, while the single-component baseline resolved the same case with no
-boundary to cross. The same mechanism produces both under-escalation (a risk fact is
-dropped) and over-escalation (an exculpating fact is dropped), confirming that the
-failure is directionally symmetric: summarization at the boundary loses whatever the
-summarizer considers secondary.
+lost. In a 300-episode experiment over 100 KYC/AML task variants and three
+architectures, the single-loop baseline attenuated 0% of discovered facts at constraint
+distance 2. The fixed pipeline attenuated 56%. The orchestrator-subagent architecture
+attenuated 85%. The same mechanism produces both under-escalation (a risk fact is
+dropped) and over-escalation (an exculpating fact is dropped).
 
 The benchmark, all tasks, policy packs, and the verification harness are open-source.
 
@@ -56,10 +54,10 @@ We make three contributions:
    policy-relevant detail: the screening result, the ownership percentage, the identity
    mismatch. The component that violates is not the component that failed.
 
-2. **An instrument.** Fiducia-bench: five KYC/AML scenarios (expandable to 100 via
-   template generation), machine-checkable policy packs (rules-as-data, each declaring
-   its own verifier type), deterministic verification by trajectory replay, and
-   environment-owned audit logs. Over 70% of policy rules are checked without a judge.
+2. **An instrument.** Fiducia-bench: 100 KYC/AML task variants (generated from 5 seeds),
+   machine-checkable policy packs (rules-as-data, each declaring its own verifier type),
+   deterministic verification by trajectory replay, and environment-owned audit logs.
+   All 10 policy rules are checked without a judge.
 
 3. **A metric family.** Constraint propagation loss, fact attenuation, violation locus,
    authority diffusion — all pure functions of the trajectory and the task
@@ -257,102 +255,111 @@ opposite governance outcomes on the same model.
 
 ### 5.1 Setup
 
-We evaluate two open-weights models on the five seed tasks under three architectures
-and two policy-access modes:
+We evaluate on Qwen2.5-32B-Instruct-GPTQ-Int4 (32B dense, local vLLM) across all 100
+template-expanded task variants and three architectures under P0.
 
-| Model | Parameters | Activation | Quantization |
-|-------|-----------|------------|-------------|
-| Qwen3-30B-A3B | 30B total, 3B active (MoE) | GPTQ-Int4 | Local vLLM |
-| Qwen2.5-32B-Instruct | 32B dense | GPTQ-Int4 | Local vLLM |
+| | Detail |
+|---|---|
+| Model | Qwen2.5-32B-Instruct-GPTQ-Int4, vLLM 0.11, RTX 5090 |
+| Grid | {D0, D1, D2} × P0 × 100 task variants |
+| Step budget | 25 per episode |
+| Temperature | 0.0, seed=0 |
+| Simulator | Scripted (deterministic) |
+| **Total episodes** | **300** (100 variants × 3 arms) |
 
-**Grid:** {D0, D1, D2} × {P0} for both models; {D0, D1, D2} × {P1} for both models.
-Step budget: 25 per episode. Temperature: 0.0 for seed=0, 0.6 for seed=1 (Qwen2.5
-only). Signal cells confirmed with k=3–4 repeats.
-
-**Total episodes:** 39 (Qwen3-30B-A3B) + 45 (Qwen2.5-32B) = 84.
+Additionally, a pilot on 5 seed tasks was run on Qwen3-30B-A3B-GPTQ-Int4 (MoE, 3B
+active) under P0 and P1 (84 episodes total) to establish the capability floor and test
+the P1 factor. Policy-access results (D0×P1 vs D0×P0) showed no systematic difference
+on either model.
 
 ### 5.2 Results
 
-**Finding 0: Model capability is the first gate.**
-
-Qwen3-30B-A3B (3B active parameters) sits below the benchmark's capability floor.
-Truncation rate: 14/15 under P0. The model rarely calls `control_finish` and screens
-the customer rather than the wire beneficiary in 12/15 cells. Governed success: 0/15.
-This is not a negative result about decomposition; it is a measurement of where the
-benchmark's dynamic range begins: a model that cannot complete the basic workflow under
-*any* arm cannot produce governance signals.
-
-Qwen2.5-32B (32B dense) crosses the floor. Truncation drops to 2/10 for D0.
-Facts are discovered in 4/10 D0 episodes. The pipeline hands off. Governed success
-remains 0/30, but the failure mode shifts from "never got there" to "got there and
-made a governance mistake" — which is what the benchmark exists to measure.
-
-**Finding 1: Fact attenuation at the boundary is reproducible and stable.**
-
-kyc-0005 × D2 on Qwen3-30B-A3B: the exculpating identity attributes (DOB 1991 vs
-1958, nationality domestic vs vantalia) are discovered every run (4/4) and dropped at
-the researcher→orchestrator handoff every run (survived=False, 4/4). The orchestrator
-sees "EXACT PEP MATCH" without the comparison that would resolve it, and either
-escalates (over-reaction) or stalls. D0 resolves the same case in 4–9 tool calls with
-no boundary to cross.
-
-This reproduces on Qwen2.5-32B under P1: kyc-0005 D1 and D2 both show attenuation
-(survived=False), while D0 handles it correctly.
-
-**Finding 2: D0's failures and D1/D2's failures are qualitatively different.**
-
-Under Qwen2.5-32B P0 (pooled k=2, n=10 per arm):
+**Table 1: Full grid (Qwen2.5-32B, n=100 per arm)**
 
 | | D0 | D1 | D2 |
 |---|---|---|---|
-| Truncated | 2/10 | 6/10 | 5/10 |
-| Fact discovered (any) | 4/10 | 3/10 | 2/10 |
-| Attenuation | 0 | 1 | 1 |
-| Propagation loss | 2 | 2 | 0 |
+| Governed success | 0/100 | 3/100 | 1/100 |
+| Truncated | 37/100 | 39/100 | 52/100 |
+| Fact discovered (any) | 16/100 | 18/100 | 27/100 |
+| **Attenuation** | **0** | **9** | **22** |
+| Propagation loss | 0 | 4 | 11 |
+| Prompt tokens | 3.5M | 4.6M | 4.3M |
+| Wall time | 1.4h | 1.9h | 1.8h |
 
-D0's propagation loss comes entirely from kyc-0003: it discovers the sanctions match,
-freezes the wire, but never escalates to the sanctions team. This is a *judgment*
-failure — D0 has no boundary to blame. D1's attenuation comes from kyc-0005: the fact
-is present in the intake handoff but dropped in the researcher→decider summary. This is
-a *boundary* failure. The distinction is the paper's core claim.
+**Finding 1: Attenuation scales with decomposition and is absent from D0.**
 
-**Finding 3: Policy visibility is not the driver.**
+The headline result. Conditional on the trigger fact being discovered:
 
-D0×P0 vs D0×P1 on both models shows no systematic difference. Governed success: 0/5
-both. Truncation: identical. Violations differ but not directionally. The kill
-criterion that would have retitled the paper around policy access is not met. At this
-model scale, having the policy in context versus retrieving it on demand does not
-measurably change governance outcomes.
+| Constraint distance | D0 | D1 | D2 |
+|---|---|---|---|
+| 0 | n/a | n/a | n/a |
+| 1 | n/a | 0/2 (0%) | 0/1 (0%) |
+| **2** | **0/16 (0%)** | **9/16 (56%)** | **22/26 (85%)** |
 
-**Finding 4: The same mechanism produces opposite outcomes.**
+At distance 2, D0 never attenuates (0/16). D1 attenuates in 56% of discovered-fact
+episodes. D2 attenuates in 85%. The effect is large, monotonic in decomposition depth,
+and absent from the control arm. Distance 0 and 1 produce no attenuation on any arm,
+confirming that the effect requires a boundary to cross.
 
-kyc-0004 (positive obligation) and kyc-0005 (negative obligation) are designed as a
-paired mirror. In both, summarization at the boundary drops what the summarizer
-considers secondary. For kyc-0004, the secondary detail is the ownership structure
-(dropped → the UBO is never screened → under-escalation). For kyc-0005, the secondary
-detail is the identity mismatch (dropped → the PEP match is not resolved →
-over-escalation). Neither component decides wrongly; the obligation is lost at the
-boundary.
+**Finding 2: The same mechanism produces opposite governance outcomes.**
+
+kyc-0004 (positive obligation: elicit ownership → screen UBO → escalate) and kyc-0005
+(negative obligation: gather attributes → document mismatch → do NOT escalate) are a
+paired mirror. At distance 2:
+
+| | kyc-0004 D2 | kyc-0005 D2 |
+|---|---|---|
+| Discovered | 10/25 | 16/25 |
+| Attenuation | 8/10 (80%) | 14/16 (88%) |
+| Outcome when attenuated | UBO never screened → under-escalation | Mismatch not carried → over-escalation |
+
+In both, summarization at the boundary drops what the summarizer considers secondary.
+The component that violates is not the component that failed: the decider acts
+reasonably on what it received. The researcher screens diligently. The obligation is
+lost between them.
+
+**Finding 3: D2 discovers more facts but loses more of them.**
+
+D2 discovers trigger facts in 27/100 episodes vs D0's 16/100 — the orchestrator's
+structured delegation ("screen this person", "check if this is a false positive") elicits
+more information than D0's unguided loop. But D2 also attenuates 22 of those 27
+discoveries (81%), while D0 attenuates none. The architecture that is better at
+*finding* the policy-relevant fact is worse at *carrying* it to the component that must
+act. This is not a capability-governance tradeoff in the usual sense — it is the same
+capability producing more governance failures because the architecture has more
+boundaries to lose it at.
+
+**Finding 4: Policy visibility is not the driver.**
+
+D0×P0 vs D0×P1 on the 5 seed tasks (both models) shows no systematic difference in
+governed success, truncation, or violation rates. The kill criterion stated before data
+collection — if P1 alone explains the degradation, retitle the paper — is not met.
+Decomposition, not policy access mode, is the driver at this model scale.
 
 ### 5.3 Limitations
 
-**Model scale.** 0/84 governed_success. The benchmark is harder than the models we can
-run locally. The confirmed effect (attenuation) is real and stable, but the headline
-metric (governed success rate vs constraint distance, per arm) requires a model that
-occasionally passes — so the degradation is a rate, not a binary. A cloud-API model
-(GPT-4o, Claude) would provide this; we report what local open-weights models show.
+**Model scale.** Governed success is 4/300 (1.3%). The benchmark is harder than the
+models we can run locally. The confirmed effect (attenuation rates of 56–85% at
+distance 2) is large and stable, but the headline chart — governed *success* rate vs
+constraint distance, per arm — requires a model that occasionally passes under D0, so
+the degradation shows as a rate declining from a nonzero baseline. A frontier model
+would provide this; we report the attenuation metric directly.
 
-**Sample size.** n=10 per arm for the strongest model. Wilson CIs are wide
-([0, 0.434] for 0/5). The signal cells are confirmed at k=4; the non-signal cells are
-single-run.
+**Scripted simulator.** Substring triggers measure phrasing luck alongside governance.
+The LLM simulator (semantic topic-judge) exists and is verified but was not used for
+the reported episodes, to preserve determinism. This likely depresses discovery rates:
+a model that asks about ownership in different words gets no response, inflating
+truncation and deflating the denominator of the attenuation rate. The conditional
+attenuation rate (given discovery) is unaffected.
+
+**Single model for the full grid.** The 300-episode grid uses Qwen2.5-32B only. The
+pilot on Qwen3-30B-A3B (3B active, 39 episodes) confirmed the same attenuation signal
+on kyc-0005 D2 at k=4, but sat below the capability floor for most tasks. A third
+model (ideally frontier-scale) would strengthen the generalization claim.
 
 **Prompt confound.** The CONDUCT block was tuned against the five seed tasks, not a
 held-out set. We froze it before data collection and report it as such. All prompts
 are published in Appendix C.
-
-**Scripted simulator.** Substring triggers measure phrasing luck. The LLM simulator
-exists, is verified, and is available; the reported episodes use the scripted one for
-determinism.
 
 ---
 

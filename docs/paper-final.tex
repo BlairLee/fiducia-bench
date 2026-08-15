@@ -80,30 +80,18 @@ already claim pieces of the space, and we position against them honestly.
 %% ===================================================================
 \section{Related Work}
 
-We organize prior work by what it measures and what it leaves open.
+Four recent works measure governance independently of capability: Corrupt
+Success~\cite{corrupt} re-scores capability benchmarks for procedural compliance;
+AgentAbstain~\cite{abstain} pairs should-act and should-abstain tasks to prevent
+gaming by always acting; PhantomPolicy~\cite{phantom} hides policy facts from
+context; Act-or-Escalate~\cite{escalate} measures confidence-based deferral.
+None varies the \emph{architecture} while holding task and model constant---they
+give per-model failure signatures, we give per-architecture governance signatures.
 
-\textbf{Capability-governance separation.} Corrupt Success \cite{corrupt} demonstrates
-that the gap between task completion and procedural compliance is large and systematic.
-We extend this to a question they do not ask: does the gap differ across architectures?
-
-\textbf{Paired act/abstain.} AgentAbstain \cite{abstain} designs matched pairs so
-agents cannot game the metric by always acting. Our escalation metric scores in both
-directions by construction (tasks 0001/0005 penalize over-escalation; 0003/0004
-penalize under-escalation).
-
-\textbf{Hidden policy facts.} PhantomPolicy \cite{phantom} tests whether agents seek
-out policy information not in their context. Our Factor~P is a controlled version:
-P0 provides the full policy in context, P1 makes it retrievable only via a tool. The
-corpus is identical; only the access mode differs.
-
-\textbf{Escalation calibration.} Act-or-Escalate \cite{escalate} measures whether
-agents defer when uncertain. Our escalation design differs: correctness is fixed by a
-rule hierarchy (a fuzzy sanctions match \emph{must} be frozen; a documented
-two-attribute mismatch \emph{must not} be escalated), independent of model confidence.
-
-\textbf{What is new here.} No prior work gives per-\emph{architecture} governance
-signatures. No prior work uses obligation-based escalation, policy packs as portable
-machine-checkable artifacts, or audit reconstructability as a scored metric.
+Three design choices here have no prior counterpart: obligation-based escalation
+(correctness is fixed by a rule hierarchy, independent of model confidence), policy
+packs as portable machine-checkable artifacts (rules-as-data with declared verifier
+types), and audit reconstructability as a scored metric.
 
 %% ===================================================================
 \section{Benchmark Design}
@@ -111,11 +99,8 @@ machine-checkable artifacts, or audit reconstructability as a scored metric.
 \subsection{Environment and Tools}
 
 The environment is a seeded JSON store with deterministic tools. Every call is
-auto-logged with the tool name, arguments, result digest, and the \emph{actor} that
-made the call. The actor is stamped by the arm's topology code, never by the component
-itself: a model that writes \texttt{"actor": "compliance\_officer"} into its output
-changes nothing.
-
+auto-logged with the tool name, arguments, result digest, and the \emph{actor}
+stamped by the arm's topology code---never by the component itself.
 \textbf{Invariant~1:} The environment owns the audit log and actor attribution.
 
 \subsection{Policy Packs}
@@ -187,15 +172,9 @@ D2 & Orchestrator + scoped subagents & 2/round-trip & Strict + tool scoping \\
 \label{tab:arms}
 \end{table}
 
-All arms share the same tools, policy corpus, and ROLE/CONDUCT prompt blocks. What
-differs is only the topology paragraph and context assembly.
-
-\textbf{Invariant~8:} A brain's output is filtered to a whitelist of action keys and
-the actor is stamped by the arm. A component sees a tool result only if it made the
-call. Leaking context across a boundary silently destroys the effect being measured.
-
-\textbf{Factor~P:} P0 pastes the full policy pack into context; P1 makes it available
-only through \texttt{policy\_lookup.search}. Same corpus, different access mode.
+All arms share the same tools, policy corpus, and ROLE/CONDUCT prompt blocks; only
+the topology paragraph and context assembly differ. A component sees a tool result
+only if it made the call---context cannot leak across a boundary.
 
 %% ===================================================================
 \section{Metrics}
@@ -208,20 +187,14 @@ re-scorable when verifiers improve.
   correct escalation.
 \item \textbf{Propagation loss:} fact discovered but obligated action missing
   (\texttt{obliges}) or forbidden action taken (\texttt{forbids}).
+  Trigger facts declare \texttt{obliges} or \texttt{forbids}; both directions score,
+  because under- and over-escalation are the same mechanism with opposite outcomes.
 \item \textbf{Fact attenuation:} fact discovered, boundary crossed,
-  \texttt{present\_in} tokens absent from \emph{every} handoff on the path.
-\item \textbf{Violation locus:} which component issued the violating call.
-\item \textbf{Authority diffusion:} tool calls the arm refused on scope grounds
-  (D2-specific).
+  \texttt{present\_in} tokens absent from \emph{every} handoff on the path
+  (\texttt{any} semantics would pass a distance-2 task whose last hop dropped the fact).
+\item \textbf{Violation locus / authority diffusion:} which component issued the
+  violating call; tool calls refused on scope grounds (D2-specific).
 \end{itemize}
-
-\textbf{Survival semantics.} A fact survives only if \emph{every} handoff on the path
-carries at least one \texttt{present\_in} token. \texttt{any} semantics would pass a
-distance-2 task whose last hop dropped the fact.
-
-\textbf{Directional symmetry.} Trigger facts declare \texttt{obliges} or
-\texttt{forbids}. Both score as propagation loss, because under- and over-escalation
-are the same mechanism with opposite outcomes.
 
 %% ===================================================================
 \section{Experiments}
@@ -315,56 +288,31 @@ D0$\times$P0 vs D0$\times$P1 shows no systematic difference on any of the three 
 tested (Qwen3-30B-A3B, Qwen2.5-32B, gpt-4.1-mini). The kill criterion that would have
 retitled the paper around policy access is not met.
 
-\subsection{Full Grid Summary}
-
-\begin{table}[h]
-\centering
-\small
-\caption{Full grid, P0, both models (n$\approx$100 per arm).}
-\begin{tabular}{ll rrr rrr}
-\toprule
-& & \multicolumn{3}{c}{Qwen2.5-32B} & \multicolumn{3}{c}{gpt-4.1-mini} \\
-\cmidrule(lr){3-5} \cmidrule(lr){6-8}
-Metric & & D0 & D1 & D2 & D0 & D1 & D2 \\
-\midrule
-Governed success & & 0 & 3 & 1 & 0 & 3 & 1 \\
-Truncated & & 37 & 39 & 52 & 49 & 54 & 50 \\
-Discovered (any) & & 16 & 18 & 27 & 27 & 34 & 25 \\
-Attenuation & & 0 & 9 & 22 & 0 & 1 & 1 \\
-Prop.\ loss & & 0 & 4 & 11 & 14 & 24 & 11 \\
-\bottomrule
-\end{tabular}
-\label{tab:full}
-\end{table}
-
 \subsection{Limitations}
 
-\textbf{Model scale.} Governed success is 8/596 (1.3\%). The benchmark is harder than
-the models evaluated. The attenuation signal is large and stable; the headline
-governed-success chart requires a model that occasionally passes under D0.
-
-\textbf{Scripted simulator.} Substring triggers measure phrasing alongside governance.
-An LLM simulator exists and is verified but was not used for the reported episodes.
-
-\textbf{Prompt confound.} The CONDUCT block was tuned against the seed tasks. We froze
-it before data collection and publish all prompts in the appendix.
+\textbf{Model scale.} Governed success is 8/596 (1.3\%); the attenuation signal is
+large and stable, but a model that passes D0 is needed to anchor the headline chart.
+\textbf{Scripted simulator.} Substring triggers measure phrasing alongside governance;
+an LLM simulator exists but was not used for the reported episodes.
+\textbf{Prompt confound.} The CONDUCT block was frozen before data collection; full
+prompts are in Appendix~\ref{app:prompts}.
+Full per-arm counts are in Appendix~\ref{app:grid}.
 
 %% ===================================================================
 \section{Discussion}
 
-\textbf{For agent builders.} The handoff summary is a governance-critical surface.
-Attenuation there produces failures that no individual component is responsible for and
-that capability benchmarks cannot see. Structured handoff protocols (what to include,
-what to refuse to summarize) are a governance intervention.
+\textbf{For agent builders.} The handoff summary is a governance-critical surface:
+attenuation there produces failures no individual component is responsible for and that
+capability benchmarks cannot see. Structured handoff protocols---specifying what to
+include and what must not be summarized away---are a direct governance intervention.
+Three benchmark design choices proved load-bearing and we recommend them generally:
+(1)~the environment owns attribution; (2)~verification replays state at each step;
+(3)~both directions of escalation are scored.
 
-\textbf{For evaluation designers.} Three design choices proved load-bearing:
-(1)~the environment owns attribution; (2)~verification replays state; (3)~both
-directions of escalation are tested. We recommend these for any governance benchmark.
-
-\textbf{Model-capability interaction.} The cross-model comparison shows attenuation
-is not an intrinsic property of the architecture but an interaction between architecture
-and model capability. This suggests that the governance cost of decomposition may
-decrease as models improve---but the direction (D0 always zero) is invariant.
+\textbf{Model-capability interaction.} Attenuation is not an intrinsic property of the
+architecture but an interaction with model capability: the governance cost of
+decomposition may decrease as models improve, but the direction (D0 always zero) is
+invariant across both models tested.
 
 %% ===================================================================
 \section{Conclusion}
@@ -486,6 +434,29 @@ policy\_lookup.search tool to consult it.
 \end{quote}
 
 The corpus is identical; only the access mode differs. All reported results use P0.
+
+\section{Full Grid Results}
+\label{app:grid}
+
+\begin{table}[h]
+\centering
+\small
+\caption{Full grid, P0, both models (n$\approx$100 per arm).}
+\begin{tabular}{ll rrr rrr}
+\toprule
+& & \multicolumn{3}{c}{Qwen2.5-32B} & \multicolumn{3}{c}{gpt-4.1-mini} \\
+\cmidrule(lr){3-5} \cmidrule(lr){6-8}
+Metric & & D0 & D1 & D2 & D0 & D1 & D2 \\
+\midrule
+Governed success & & 0 & 3 & 1 & 0 & 3 & 1 \\
+Truncated & & 37 & 39 & 52 & 49 & 54 & 50 \\
+Discovered (any) & & 16 & 18 & 27 & 27 & 34 & 25 \\
+Attenuation & & 0 & 9 & 22 & 0 & 1 & 1 \\
+Prop.\ loss & & 0 & 4 & 11 & 14 & 24 & 11 \\
+\bottomrule
+\end{tabular}
+\label{tab:full}
+\end{table}
 
 \section{Example Task: kyc-0005 (Resolvable PEP False Positive)}
 \label{app:task}

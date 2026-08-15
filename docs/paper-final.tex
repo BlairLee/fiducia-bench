@@ -19,79 +19,69 @@
 \maketitle
 
 \begin{abstract}
-Agent benchmarks measure whether the agent finished the task. We measure whether it
+Existing agent benchmarks ask whether the agent finished the task. We ask whether it
 finished it \emph{within policy}. We introduce Fiducia-bench, a benchmark for the
 \emph{governability} of financial agents---whether they escalate when obligated, abstain
-when required, and leave an auditable trail---and use it to study a question no existing
-benchmark answers: \textbf{does decomposing an agent into components degrade its
-governance?}
+when required, and leave an auditable trail---and use it to study a question no prior
+benchmark addresses: does decomposing an agent into components degrade its governance?
 
-We find that it does, and the mechanism is specific: policy-relevant facts discovered by
-one component are \emph{attenuated at the handoff boundary} before reaching the component
-that must act on them. In a 626-episode experiment across 100 KYC/AML task variants, two
-models, and three architectures, a 32B open-weights model attenuated 0\% of discovered
-facts under the single-loop baseline, 56\% under a fixed pipeline, and 85\% under an
+It does, and the mechanism is specific. Policy-relevant facts discovered by one component
+are \emph{attenuated at the handoff boundary} before reaching the component that must act
+on them. In a 626-episode experiment across 100 KYC/AML task variants, two models, and
+three architectures, a 32B open-weights model attenuated 0\% of discovered facts under a
+single-loop baseline, 56\% under a fixed pipeline, and 85\% under an
 orchestrator-subagent architecture (all at constraint distance~2). A stronger model
-(gpt-4.1-mini) reduced attenuation to 3--6\%, demonstrating that the effect is
-model-capability-dependent: weaker models are more vulnerable to governance failures
-induced by decomposition. The same mechanism produces both under-escalation (risk facts
-dropped) and over-escalation (exculpating facts dropped). The benchmark, all tasks, and
-the verification harness are open-source.
+(gpt-4.1-mini) attenuated 3--6\% under the same conditions, suggesting the governance
+cost of decomposition is partly a function of model capability. Critically, the same
+mechanism produces both under-escalation and over-escalation, depending on whether the
+dropped fact was a risk signal or an exculpating one. The benchmark, all tasks, and the
+verification harness are open-source.
 \end{abstract}
 
 %% ===================================================================
 \section{Introduction}
 
 Enterprise agent systems are moving from single reasoning loops to
-orchestrator-subagent architectures. The motivation is engineering: modularity, tool
-scoping, specialization. The unasked question: does this decomposition degrade the
-agent's ability to comply with the rules that govern its work?
+orchestrator-subagent architectures, driven by engineering needs: modularity, tool
+scoping, specialization. Whether this decomposition degrades the agent's ability to
+comply with the rules governing its work is a question the field has not yet asked.
 
-Existing benchmarks measure decomposition's effect on \emph{capability} (task
-completion). Four recent works measure governance independently: Corrupt Success
-\cite{corrupt} re-scores capability benchmarks with procedure-awareness; AgentAbstain
-\cite{abstain} pairs should-act and should-abstain tasks; PhantomPolicy
-\cite{phantom} hides policy facts from the agent's context; Act-or-Escalate
-\cite{escalate} measures escalation calibration. None varies the \emph{architecture}
-while holding the task and model constant. They give per-model failure signatures---we
-give per-architecture governance signatures.
+Where existing benchmarks measure decomposition's effect on \emph{capability}, we
+measure its effect on \emph{governability}. Four recent works study governance in
+single-architecture settings~\cite{corrupt,abstain,phantom,escalate}, but none varies
+the architecture while holding task and model constant. Our contributions are threefold.
+We report an empirical finding---decomposition degrades governance through fact
+attenuation at component boundaries, and the magnitude is model-capability-dependent (56--85\% attenuation on a 32B model, 3--6\% on gpt-4.1-mini).
+We release Fiducia-bench, a benchmark of 100 KYC/AML task variants with
+machine-checkable policy packs, deterministic verification by trajectory replay, and
+environment-owned audit logs; all 10 policy rules are checkable without a judge.
+And we introduce a metric family---constraint propagation loss, fact attenuation,
+violation locus, authority diffusion---defined as pure functions of the trajectory so
+that historical runs remain re-scorable as verifiers improve.
 
-We make three contributions:
-\begin{enumerate}
-\item \textbf{A finding.} Decomposition degrades governability, and the mechanism is
-  fact attenuation at component boundaries. The effect is model-capability-dependent:
-  a 32B open-weights model attenuates 56--85\% of discovered facts across boundaries,
-  while gpt-4.1-mini attenuates 3--6\%.
-\item \textbf{An instrument.} Fiducia-bench: 100 KYC/AML task variants,
-  machine-checkable policy packs (rules-as-data with declared verifier types),
-  deterministic verification by trajectory replay, and environment-owned audit logs.
-  All 10 policy rules are checked without a judge.
-\item \textbf{A metric family.} Constraint propagation loss, fact attenuation,
-  violation locus, authority diffusion---all pure functions of the trajectory, all
-  re-scorable when verifiers improve.
-\end{enumerate}
-
-\textbf{Scope.} This studies an \emph{engineering} decomposition (one task split
-across components), not multi-agent RL. The overlap with work on information survival
-across time (memory, cross-session continuity) is real but abstract. This is an
-integration and domain-depth contribution, not a first-mover one---several 2026 papers
-already claim pieces of the space, and we position against them honestly.
+The decomposition studied here is an engineering pattern (one task split across
+components), not multi-agent reinforcement learning. Several 2026 papers already
+address adjacent problems; we position against them in Section~\ref{sec:related}.
 
 %% ===================================================================
 \section{Related Work}
+\label{sec:related}
 
-Four recent works measure governance independently of capability: Corrupt
-Success~\cite{corrupt} re-scores capability benchmarks for procedural compliance;
-AgentAbstain~\cite{abstain} pairs should-act and should-abstain tasks to prevent
-gaming by always acting; PhantomPolicy~\cite{phantom} hides policy facts from
-context; Act-or-Escalate~\cite{escalate} measures confidence-based deferral.
-None varies the \emph{architecture} while holding task and model constant---they
-give per-model failure signatures, we give per-architecture governance signatures.
+Corrupt Success~\cite{corrupt} shows that the gap between task completion and
+procedural compliance is large and systematic; we extend that question to ask whether
+the gap varies across architectures. AgentAbstain~\cite{abstain} prevents gaming by
+pairing tasks that require action with tasks that require restraint; our benchmark does
+the same through obligation-based escalation---correctness is fixed by a rule hierarchy,
+not model confidence, so a fuzzy sanctions match \emph{must} be frozen and a documented
+PEP mismatch \emph{must not} be escalated regardless of what the model believes.
+PhantomPolicy~\cite{phantom} hides policy facts from context; our Factor~P is a
+controlled variant with the same corpus but two access modes (in-context vs.\ retrieval).
+Act-or-Escalate~\cite{escalate} measures calibrated deferral; our design differs because
+the correct action is determined by the rule, not by the agent's uncertainty.
 
-Three design choices here have no prior counterpart: obligation-based escalation
-(correctness is fixed by a rule hierarchy, independent of model confidence), policy
-packs as portable machine-checkable artifacts (rules-as-data with declared verifier
-types), and audit reconstructability as a scored metric.
+None of these works varies the architectural decomposition. Prior art also lacks policy
+packs as portable machine-checkable artifacts and audit reconstructability as a scored
+metric; both are novel here.
 
 %% ===================================================================
 \section{Benchmark Design}
@@ -222,12 +212,16 @@ Total: 626 episodes.
 
 \subsection{Results}
 
-\textbf{Finding 1: Attenuation scales with decomposition and is model-dependent.}
+Table~\ref{tab:headline} and Figure~\ref{fig:attenuation} show the headline result.
+D0 attenuates zero facts on either model---there is no boundary to cross.
+On Qwen2.5-32B, D1 drops 56\% of discovered facts at distance~2 and D2 drops 85\%.
+On gpt-4.1-mini the rates fall to 3\% and 6\%, but the ordering is preserved.
+Stronger models write better handoff summaries, but decomposition consistently
+increases attenuation relative to the single-loop baseline.
 
 \begin{table}[h]
 \centering
-\caption{Fact attenuation rate at constraint distance~2, conditional on discovery.
-  The headline result.}
+\caption{Fact attenuation rate at constraint distance~2, conditional on discovery.}
 \begin{tabular}{lccc}
 \toprule
 Model & D0 & D1 & D2 \\
@@ -243,19 +237,17 @@ gpt-4.1-mini & 0/27 (0\%) & 1/30 (3\%) & 1/18 (6\%) \\
 \centering
 \includegraphics[width=0.72\textwidth]{figure1_attenuation}
 \caption{Fact attenuation rate (conditional on discovery) vs.\ constraint distance,
-  per arm and model. D0 is always zero because there is no boundary to cross.
-  The gap between Qwen2.5-32B and gpt-4.1-mini demonstrates that the governance
-  cost of decomposition is model-capability-dependent.}
+  per arm and model. D0 is structurally zero; both models show a monotone increase
+  with decomposition depth, with gpt-4.1-mini attenuating far less at each level.}
 \label{fig:attenuation}
 \end{figure}
 
-D0 never attenuates on either model. On Qwen2.5-32B, D1 attenuates 56\% and D2
-attenuates 85\% of discovered facts at distance~2. On gpt-4.1-mini, the rates drop to
-3\% and 6\%. The effect is \emph{model-capability-dependent}: stronger models produce
-better handoff summaries that preserve policy-relevant detail. But the direction is
-consistent---D0 is always zero.
-
-\textbf{Finding 2: The same mechanism produces opposite governance outcomes.}
+The paired tasks reveal a second pattern: the same mechanism produces \emph{opposite}
+governance outcomes depending on which kind of fact is dropped (Table~\ref{tab:mirror}).
+On kyc-0004, the dropped fact is a risk signal, and the outcome is under-escalation.
+On kyc-0005, it is an exculpating finding, and the outcome is over-escalation. In both
+cases the summarizer treated the fact as secondary; in both cases a different component
+bore the consequence. The component that violates is not the component that failed.
 
 \begin{table}[h]
 \centering
@@ -272,21 +264,15 @@ kyc-0005 (negative) & 16/25 & 14/16 (88\%) & Mismatch not carried $\to$ over-esc
 \label{tab:mirror}
 \end{table}
 
-Summarization at the boundary drops what the summarizer considers secondary. The
-component that violates is not the component that failed.
+A third pattern concerns discovery. On Qwen2.5-32B, D2 elicits trigger facts in 27
+of 100 episodes versus 16 for D0---the orchestrator's structured delegation prompts
+more targeted questions. But D2 then attenuates 22 of those 27 facts (81\%), while D0
+attenuates none. The architecture that is better at \emph{finding} policy-relevant
+information is worse at \emph{carrying} it.
 
-\textbf{Finding 3: D2 discovers more facts but loses more of them.}
-
-On Qwen2.5-32B, D2 discovers trigger facts in 27/100 episodes vs D0's 16/100---the
-orchestrator's structured delegation elicits more information. But D2 attenuates 22
-of those 27 (81\%), while D0 attenuates none. The architecture that is better at
-\emph{finding} policy-relevant facts is worse at \emph{carrying} them.
-
-\textbf{Finding 4: Policy visibility is not the driver.}
-
-D0$\times$P0 vs D0$\times$P1 shows no systematic difference on any of the three models
-tested (Qwen3-30B-A3B, Qwen2.5-32B, gpt-4.1-mini). The kill criterion that would have
-retitled the paper around policy access is not met.
+Finally, we ran D0 under both P0 (full policy in context) and P1 (retrieval on demand)
+across three models. No systematic difference appeared. Decomposition, not policy access
+mode, drives the effect.
 
 \subsection{Limitations}
 
@@ -301,35 +287,38 @@ Full per-arm counts are in Appendix~\ref{app:grid}.
 %% ===================================================================
 \section{Discussion}
 
-\textbf{For agent builders.} The handoff summary is a governance-critical surface:
-attenuation there produces failures no individual component is responsible for and that
-capability benchmarks cannot see. Structured handoff protocols---specifying what to
-include and what must not be summarized away---are a direct governance intervention.
-Three benchmark design choices proved load-bearing and we recommend them generally:
-(1)~the environment owns attribution; (2)~verification replays state at each step;
-(3)~both directions of escalation are scored.
+The handoff summary is a governance-critical surface that capability benchmarks have
+no reason to inspect. Failures arising there are diffuse: no individual component
+acted wrongly, the information simply did not survive the boundary. Structured handoff
+protocols---defining what a summary must contain and what it is not permitted to
+omit---are a natural intervention, and one that current practice largely ignores.
 
-\textbf{Model-capability interaction.} Attenuation is not an intrinsic property of the
-architecture but an interaction with model capability: the governance cost of
-decomposition may decrease as models improve, but the direction (D0 always zero) is
-invariant across both models tested.
+Three design choices in Fiducia-bench proved load-bearing enough to recommend generally:
+attributing tool calls in the environment rather than trusting agent self-reports,
+replaying state at each verification step rather than checking final state, and scoring
+both over- and under-escalation so that always-escalate is not a viable strategy.
+
+The cross-model comparison complicates any strong architectural verdict.
+Attenuation on gpt-4.1-mini is low enough to be operationally tolerable in some
+settings, which suggests the governance cost of decomposition is partly a moving
+target as models improve. What does not move is the baseline: D0 attenuates nothing
+on either model, because D0 has no boundary to lose a fact at.
 
 %% ===================================================================
 \section{Conclusion}
 
-We introduced Fiducia-bench and used it to show that decomposing an agent into
-components degrades policy compliance through fact attenuation at handoff boundaries.
-The effect is large on a 32B model (56--85\% at distance~2), small on gpt-4.1-mini
-(3--6\%), and absent from the single-loop baseline on both. The same mechanism produces
-both under- and over-escalation. Policy access mode (in-context vs.\ retrieval) is not
-the driver.
+Decomposing an agent into components degrades its policy compliance through fact
+attenuation at handoff boundaries. The effect is large on a 32B model (56--85\%
+at distance~2), modest on gpt-4.1-mini (3--6\%), and absent from the single-loop
+baseline on both. The underlying mechanism is direction-agnostic: the same
+summarization loss that suppresses a risk signal on one task suppresses an exculpating
+finding on another, producing over-escalation instead.
 
-What we did not show: that this holds for frontier models at scale, that it generalizes
-beyond KYC/AML, or that it cannot be fixed by better prompting. We state these honestly
-because a reviewer who discovers them is a worse outcome than an author who says so.
-
-The benchmark, all 100 tasks, policy packs, and the verification harness are
-open-source.
+Three caveats deserve naming. We have not shown that the effect holds at frontier-model
+scale, that it generalizes beyond KYC/AML, or that it cannot be reduced by better
+handoff prompting. A reviewer who surfaces these is in a worse position than an author
+who states them. The benchmark, all 100 tasks, policy packs, and the verification
+harness are open-source.
 
 %% ===================================================================
 \appendix

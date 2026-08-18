@@ -2,6 +2,9 @@
 
 **Benchmarking the *governability* of financial agents.**
 
+> **Paper:** [Governance at the Boundary: How Agent Decomposition Degrades Policy Compliance](https://arxiv.org/abs/2608.16055)
+> Bowen Li, Guojun Wang — arXiv:2608.16055
+
 Existing agent benchmarks measure *capability* — can the agent finish the task.
 Fiducia measures *governability* — can the agent finish the task reliably, within
 policy, with an auditable trail, and escalate exactly when it should.
@@ -10,8 +13,8 @@ policy, with an auditable trail, and escalate exactly when it should.
 Governance obligations fail at **boundaries** — between components, between what one
 component discovered and what another decides. Fiducia is the instrument that isolates it.
 
-Status: **Phase 1b** — deterministic pipeline plus decomposition metrics (actor
-attribution, handoff logging, fact attenuation) validated on `kyc_case` seed tasks.
+**Key finding:** A 32B model attenuates 0% of policy-relevant facts under a single-loop
+baseline, 56% under a fixed pipeline, and 85% under an orchestrator-subagent architecture.
 
 ## Quick start
 
